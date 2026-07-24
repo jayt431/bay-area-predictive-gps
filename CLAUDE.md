@@ -43,3 +43,34 @@ Replace the relevant function body in `mock_data.py` and keep the returned dict 
 ## Model
 
 Configured in `agent.py` as `MODEL = "claude-sonnet-5"`. The system prompt in that same file holds all judgment rules (baseline comparison, timing overlap, signal-vs-noise filtering).
+
+## Product vision
+
+This project is the foundation of a proactive GPS and route intelligence app for the Bay Area. The core painpoint: reactive tools like Google Maps and Waze tell you about disruptions after you've already left. This agent tells you the night before or morning of, based on your actual schedule.
+
+Long-term goals:
+- Sync to a user's calendar to know their planned routes for the day
+- Send proactive alerts 12-24 hours ahead flagging events, weather, protests, sports games, and construction
+- Web app with a route input form and alert card UI (demoable, shareable)
+- Anonymized movement data layer across the Bay Area for B2B licensing (urban planning, retail, real estate)
+
+## Roadmap
+
+**Phase 1 — Foundation (current)**
+- [x] Core agent with live weather + news, mocked events + traffic
+- [x] Git + GitHub set up, code pushed to `github.com/jayt431/bay-area-predictive-gps`
+- [x] Fixed `timing_overlap` bug: events now tagged with both geographic and timing relevance
+
+**Phase 2 — Web backend**
+- Wrap the agent in a Flask or FastAPI endpoint
+- POST `{ route_id, date }` → returns structured alert JSON
+
+**Phase 3 — Frontend**
+- Simple form: origin, destination, departure time
+- Alert card displaying RISK, headline, and recommendation
+- Browser-accessible, screenshot/demo ready
+
+**Phase 4 — Ship**
+- Deploy to Render or Railway (free tier)
+- Live public URL
+- GitHub README with demo recording for portfolio

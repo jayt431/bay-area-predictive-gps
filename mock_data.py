@@ -135,15 +135,29 @@ _EVENTS_BY_ROUTE = {
 }
 
 
+def _timing_overlaps(event_start: str, departure: str, duration_min: int) -> bool:
+    """True if the event start falls within 1 hour of the commute window."""
+    from datetime import datetime, timedelta
+    fmt = "%H:%M"
+    dep = datetime.strptime(departure, fmt)
+    window_start = dep - timedelta(hours=1)
+    window_end = dep + timedelta(minutes=duration_min) + timedelta(hours=1)
+    evt = datetime.strptime(event_start, fmt)
+    return window_start <= evt <= window_end
+
+
 def get_events_near_route(route_id: str, date: str) -> list[dict]:
-    """Return mocked events for this route, tagged with corridor proximity."""
+    """Return mocked events for this route, tagged with corridor proximity and timing."""
     routine = get_routine(route_id)
     corridor = routine["corridor"]
     events = _EVENTS_BY_ROUTE.get(route_id, [])
     out = []
     for e in events:
         on_corridor = e["area"] in corridor or e["distance_from_route_km"] <= 0.7
-        out.append({**e, "date": date, "on_corridor": on_corridor})
+        timing_overlap = _timing_overlaps(
+            e["start_time"], routine["usual_departure"], routine["typical_duration_min"]
+        )
+        out.append({**e, "date": date, "on_corridor": on_corridor, "timing_overlap": timing_overlap})
     return out
 
 
