@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bay Area Predictive GPS</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 20px 32px;
+    }
+    header h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: 0.01em; }
+    header p  { font-size: 0.85rem; color: #8892b0; margin-top: 4px; }
+
+    .container {
+      max-width: 640px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 28px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      margin-bottom: 24px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #555;
+      margin-bottom: 6px;
+    }
+
+    select, input[type="date"] {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #dde1e7;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      color: #1a1a2e;
+      background: #fafafa;
+      margin-bottom: 18px;
+      appearance: none;
+    }
+    select:focus, input[type="date"]:focus {
+      outline: none;
+      border-color: #4f8ef7;
+      background: #fff;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover  { background: #2d2d4e; }
+    button:active { background: #111127; }
+    button:disabled { background: #999; cursor: not-allowed; }
+
+    /* Alert card */
+    #result { display: none; }
+
+    .risk-badge {
+      display: inline-block;
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 14px;
+    }
+    .risk-none   { background: #d4edda; color: #1a6b35; }
+    .risk-low    { background: #fff3cd; color: #856404; }
+    .risk-medium { background: #ffe0b2; color: #a64d00; }
+    .risk-high   { background: #f8d7da; color: #842029; }
+
+    .alert-headline {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 14px;
+      line-height: 1.35;
+    }
+
+    .alert-section { margin-bottom: 14px; }
+    .alert-section-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      margin-bottom: 4px;
+    }
+    .alert-section-body {
+      font-size: 0.92rem;
+      line-height: 1.55;
+      color: #333;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #eee;
+      margin: 18px 0;
+    }
+
+    /* Dry-run data */
+    .dry-run-note {
+      font-size: 0.82rem;
+      color: #888;
+      background: #f7f8fa;
+      border-left: 3px solid #ccc;
+      padding: 10px 14px;
+      border-radius: 4px;
+      margin-bottom: 14px;
+    }
+
+    details summary {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #555;
+      cursor: pointer;
+      padding: 6px 0;
+    }
+    details pre {
+      background: #f4f5f7;
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 0.75rem;
+      overflow-x: auto;
+      margin-top: 8px;
+      line-height: 1.5;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 18px; height: 18px;
+      border: 2px solid #fff;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-msg {
+      color: #842029;
+      background: #f8d7da;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Bay Area Predictive GPS</h1>
+  <p>Know before you go — commute alerts generated a day ahead</p>
+</header>
+
+<div class="container">
+
+  <div class="card">
+    <label for="route">Commuter route</label>
+    <select id="route">
+      <option value="">Loading routes…</option>
+    </select>
+
+    <label for="date">Date to analyze</label>
+    <input type="date" id="date" />
+
+    <button id="analyze-btn" onclick="analyze()">Analyze route</button>
+  </div>
+
+  <div class="card" id="result"></div>
+
+</div>
+
+<script>
+  // Populate route selector from API
+  async function loadRoutes() {
+    const sel = document.getElementById("route");
+    try {
+      const res = await fetch("/api/routes");
+      const routes = await res.json();
+      sel.innerHTML = routes.map(r =>
+        `<option value="${r.route_id}">${r.user} — ${r.label} (${r.usual_departure})</option>`
+      ).join("");
+    } catch {
+      sel.innerHTML = '<option value="">Could not load routes</option>';
+    }
+  }
+
+  // Default date to tomorrow
+  function setDefaultDate() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    document.getElementById("date").value = d.toISOString().split("T")[0];
+  }
+
+  async function analyze() {
+    const routeId = document.getElementById("route").value;
+    const date    = document.getElementById("date").value;
+    const btn     = document.getElementById("analyze-btn");
+    const result  = document.getElementById("result");
+
+    if (!routeId || !date) {
+      showError("Please select a route and a date.");
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Analyzing…';
+    result.style.display = "none";
+
+    try {
+      const res  = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ route_id: routeId, date }),
+      });
+      const data = await res.json();
+
+      if (data.error) { showError(data.error); return; }
+
+      if (data.mode === "agent") {
+        renderAlert(data.alert, data.date);
+      } else {
+        renderDryRun(data);
+      }
+    } catch (err) {
+      showError("Request failed. Is the server running?");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Analyze route";
+    }
+  }
+
+  function renderAlert(alert, date) {
+    const risk  = (alert.risk || "unknown").toLowerCase();
+    const result = document.getElementById("result");
+    result.innerHTML = `
+      <span class="risk-badge risk-${risk}">Risk: ${alert.risk || "—"}</span>
+      <div class="alert-headline">${alert.headline || "No headline"}</div>
+      <hr class="divider" />
+      <div class="alert-section">
+        <div class="alert-section-label">Why</div>
+        <div class="alert-section-body">${alert.why || "—"}</div>
+      </div>
+      <div class="alert-section">
+        <div class="alert-section-label">Recommendation</div>
+        <div class="alert-section-body">${alert.recommendation || "—"}</div>
+      </div>
+      <hr class="divider" />
+      <details>
+        <summary>Raw agent output</summary>
+        <pre>${escHtml(alert.raw || "")}</pre>
+      </details>
+    `;
+    result.style.display = "block";
+  }
+
+  function renderDryRun(data) {
+    const result = document.getElementById("result");
+    result.innerHTML = `
+      <div class="dry-run-note">
+        <strong>Dry-run mode</strong> — no Anthropic API key set. Showing raw tool data below.
+        Add <code>ANTHROPIC_API_KEY</code> to .env to see the full AI-generated alert.
+      </div>
+      <details open>
+        <summary>Events</summary>
+        <pre>${escHtml(prettyJson(data.data.events))}</pre>
+      </details>
+      <details>
+        <summary>Weather</summary>
+        <pre>${escHtml(prettyJson(data.data.weather))}</pre>
+      </details>
+      <details>
+        <summary>Traffic baseline</summary>
+        <pre>${escHtml(prettyJson(data.data.traffic_baseline))}</pre>
+      </details>
+      <details>
+        <summary>News</summary>
+        <pre>${escHtml(prettyJson(data.data.news))}</pre>
+      </details>
+    `;
+    result.style.display = "block";
+  }
+
+  function showError(msg) {
+    const result = document.getElementById("result");
+    result.innerHTML = `<div class="error-msg">${escHtml(msg)}</div>`;
+    result.style.display = "block";
+  }
+
+  function prettyJson(val) {
+    try { return JSON.stringify(JSON.parse(val), null, 2); }
+    catch { return String(val); }
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  loadRoutes();
+  setDefaultDate();
+</script>
+</body>
+</html>

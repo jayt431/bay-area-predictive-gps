@@ -17,13 +17,18 @@ from __future__ import annotations
 import os
 import re
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template, request
 
 import mock_data
 import tools
 from agent import RouteIntelligenceAgent, api_key_present
 
 app = Flask(__name__)
+
+
+@app.route("/")
+def index():
+    return render_template("index.html")
 
 
 @app.route("/api/health")
