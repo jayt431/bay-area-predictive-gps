@@ -71,6 +71,6 @@ Long-term goals:
 - Browser-accessible, screenshot/demo ready
 
 **Phase 4 — Ship**
-- Deploy to Render or Railway (free tier)
-- Live public URL
-- GitHub README with demo recording for portfolio
+- [x] Deployed to Render (free tier)
+- [x] Live at https://bay-area-predictive-gps.onrender.com
+- [ ] GitHub README with demo recording for portfolio
