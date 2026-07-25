@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mapbox Test — Bay Area Predictive GPS</title>
+
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #map { height: 100%; width: 100%; }
+    body { background: #0A0A0B; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+
+    /* Current location dot */
+    .me-dot {
+      width: 16px; height: 16px; border-radius: 50%;
+      background: #00E5C7; border: 2px solid #0A0A0B;
+      box-shadow: 0 0 0 4px rgba(0,229,199,0.25);
+    }
+
+    /* Alert pins */
+    .pin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #0A0A0B; cursor: pointer; }
+    .pin-red    { background: #FF3B30; box-shadow: 0 0 10px 2px rgba(255,59,48,0.6); }
+    .pin-yellow { background: #FFB020; box-shadow: 0 0 10px 2px rgba(255,176,32,0.5); }
+
+    .mapboxgl-popup-content {
+      background: #16161a; color: #E8E8E8; border: 1px solid #333;
+      border-radius: 8px; font-size: 13px; padding: 10px 12px;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+    }
+    .mapboxgl-popup-content strong { color: #fff; }
+    .mapboxgl-popup-tip { border-top-color: #16161a !important; }
+
+    .no-token {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: #E8E8E8; text-align: center; padding: 40px; line-height: 1.6;
+    }
+    .no-token code { background: #222; padding: 2px 6px; border-radius: 4px; color: #00E5C7; }
+
+    .banner {
+      position: absolute; top: 12px; left: 12px; z-index: 2;
+      background: rgba(10,10,11,0.8); color: #888; border: 1px solid #333;
+      padding: 6px 12px; border-radius: 6px; font-size: 11px;
+      font-family: "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+<body>
+  <div class="banner">MAPBOX TEST · route: rt_alex_home</div>
+  <div id="map"></div>
+
+  <script>
+    const TOKEN = "{{ mapbox_token }}";
+
+    if (!TOKEN) {
+      document.getElementById("map").innerHTML =
+        '<div class="no-token">No Mapbox token found.<br>' +
+        'Add <code>MAPBOX_TOKEN=pk.your_token</code> to your .env, ' +
+        'then restart the server.</div>';
+    } else {
+      mapboxgl.accessToken = TOKEN;
+      const map = new mapboxgl.Map({
+        container: "map",
+        style: "mapbox://styles/mapbox/dark-v11",
+        center: [-122.3999, 37.7946], // Alex origin: Financial District
+        zoom: 11,
+      });
+
+      map.on("load", async () => {
+        // Current location dot
+        const meEl = document.createElement("div");
+        meEl.className = "me-dot";
+        new mapboxgl.Marker(meEl).setLngLat([-122.3999, 37.7946]).addTo(map);
+
+        // Alert pins from the API
+        const today = new Date();
+        today.setDate(today.getDate() + 1);
+        const date = today.toISOString().split("T")[0];
+
+        const res = await fetch(`/api/pins?route_id=rt_alex_home&date=${date}`);
+        const data = await res.json();
+
+        (data.pins || []).forEach(pin => {
+          const el = document.createElement("div");
+          el.className = `pin pin-${pin.severity}`;
+          new mapboxgl.Marker(el)
+            .setLngLat([pin.lon, pin.lat])
+            .setPopup(new mapboxgl.Popup({ offset: 16 }).setHTML(
+              `<strong>${pin.name}</strong><br>${pin.reason}`
+            ))
+            .addTo(map);
+        });
+      });
+    }
+  </script>
+</body>
+</html>

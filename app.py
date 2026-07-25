@@ -51,10 +51,37 @@ def get_routes():
             "origin": r["origin"],
             "destination": r["destination"],
             "usual_departure": r["usual_departure"],
+            "lat": r["lat"],
+            "lon": r["lon"],
         }
         for r in mock_data.ROUTINES.values()
     ]
     return jsonify(routes)
+
+
+@app.route("/api/pins")
+def get_pins():
+    """Map pins (red/yellow disruptions) for a route on a date."""
+    route_id = request.args.get("route_id", "").strip()
+    date = request.args.get("date", "").strip()
+    if not route_id or not date:
+        return jsonify({"error": "route_id and date query params are required"}), 400
+    try:
+        origin = mock_data.get_routine(route_id)
+    except KeyError:
+        return jsonify({"error": f"unknown route_id: {route_id}"}), 404
+    return jsonify({
+        "route_id": route_id,
+        "date": date,
+        "origin": {"lat": origin["lat"], "lon": origin["lon"]},
+        "pins": mock_data.get_alert_pins(route_id, date),
+    })
+
+
+@app.route("/map-test")
+def map_test():
+    """Throwaway page to verify the Mapbox token and dark style render."""
+    return render_template("map_test.html", mapbox_token=os.environ.get("MAPBOX_TOKEN", ""))
 
 
 @app.route("/api/analyze", methods=["POST"])

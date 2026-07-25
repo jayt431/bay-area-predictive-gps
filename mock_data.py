@@ -96,6 +96,8 @@ _EVENTS_BY_ROUTE = {
             "expected_doors": "18:00",
             "expected_attendance": 18000,
             "distance_from_route_km": 0.5,
+            "lat": 37.7680,
+            "lon": -122.3874,
         },
         {
             "name": "Neighborhood book fair",
@@ -106,6 +108,8 @@ _EVENTS_BY_ROUTE = {
             "expected_doors": "10:00",
             "expected_attendance": 300,
             "distance_from_route_km": 1.2,
+            "lat": 37.5665,
+            "lon": -122.3230,
         },
     ],
     "rt_priya_work": [
@@ -118,6 +122,8 @@ _EVENTS_BY_ROUTE = {
             "expected_doors": "08:00",
             "expected_attendance": 400,
             "distance_from_route_km": 0.6,
+            "lat": 37.8703,
+            "lon": -122.2725,
         }
     ],
     "rt_sam_market": [
@@ -130,6 +136,8 @@ _EVENTS_BY_ROUTE = {
             "expected_doors": "08:00",
             "expected_attendance": 500,
             "distance_from_route_km": 0.1,
+            "lat": 37.7956,
+            "lon": -122.3934,
         }
     ],
 }
@@ -159,6 +167,42 @@ def get_events_near_route(route_id: str, date: str) -> list[dict]:
         )
         out.append({**e, "date": date, "on_corridor": on_corridor, "timing_overlap": timing_overlap})
     return out
+
+
+def get_alert_pins(route_id: str, date: str) -> list[dict]:
+    """Shape events as map pins with a severity the frontend can color.
+
+    red    = on the corridor AND overlapping the commute window (will affect)
+    yellow = only one of the two is true (might affect)
+    events matching neither are dropped: they don't belong on the map.
+    """
+    pins = []
+    for e in get_events_near_route(route_id, date):
+        both = e["on_corridor"] and e["timing_overlap"]
+        either = e["on_corridor"] or e["timing_overlap"]
+        if both:
+            severity = "red"
+        elif either:
+            severity = "yellow"
+        else:
+            continue
+        pins.append({
+            "name": e["name"],
+            "lat": e["lat"],
+            "lon": e["lon"],
+            "severity": severity,
+            "start_time": e["start_time"],
+            "reason": _pin_reason(e, severity),
+        })
+    return pins
+
+
+def _pin_reason(event: dict, severity: str) -> str:
+    if severity == "red":
+        return f"On your route and starts near departure ({event['start_time']})."
+    if event["on_corridor"]:
+        return f"On your route but starts at {event['start_time']}, off your window."
+    return f"Near departure ({event['start_time']}) but off your usual route."
 
 
 # ---------------------------------------------------------------------------
