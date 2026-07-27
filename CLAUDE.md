@@ -74,3 +74,25 @@ Long-term goals:
 - [x] Deployed to Render (free tier)
 - [x] Live at https://bay-area-predictive-gps.onrender.com
 - [ ] GitHub README with demo recording for portfolio
+
+**Phase 5 — Map-first redesign (in progress)**
+- Rebuild the UI around a full-screen dark Mapbox map (LEMMINO aesthetic:
+  black base, white building outlines). Design being done in Figma first.
+- Alerts shown as red pins (will affect commute) and yellow pins (might).
+- Bottom-left glass search panel with recent-location recommendations.
+- Notification bell (top-right) with unread count.
+- Backend prep done: `get_alert_pins()` in mock_data.py, `GET /api/pins`,
+  and `/map-test` page. Gated on a `MAPBOX_TOKEN` env var.
+
+## Future directions (not yet started)
+
+- **Database (Postgres + PostGIS).** No DB today — routines are hardcoded and
+  live data is fetched and discarded. Add one when user accounts arrive: it's
+  the natural trigger. Needed for accounts, saved routes, calendar-synced
+  schedules, notification history, and the B2B movement-data layer (spatial
+  queries are why PostGIS specifically). Render offers free Postgres.
+- **Lovable + Supabase hybrid.** Possible way to accelerate the frontend and
+  get accounts/DB for free: build the React UI in Lovable on top of Supabase
+  (Postgres + auth), and keep the Python agent as a separate service the
+  frontend calls. Tradeoff: two systems instead of one, and less hands-on
+  learning. Revisit after the map experience is solid, not before.
