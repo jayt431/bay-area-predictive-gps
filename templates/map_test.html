@@ -13,18 +13,6 @@
     html, body, #map { height: 100%; width: 100%; }
     body { background: #0A0A0B; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
 
-    /* Current location dot */
-    .me-dot {
-      width: 16px; height: 16px; border-radius: 50%;
-      background: #00E5C7; border: 2px solid #0A0A0B;
-      box-shadow: 0 0 0 4px rgba(0,229,199,0.25);
-    }
-
-    /* Alert pins */
-    .pin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #0A0A0B; cursor: pointer; }
-    .pin-red    { background: #FF3B30; box-shadow: 0 0 10px 2px rgba(255,59,48,0.6); }
-    .pin-yellow { background: #FFB020; box-shadow: 0 0 10px 2px rgba(255,176,32,0.5); }
-
     .mapboxgl-popup-content {
       background: #16161a; color: #E8E8E8; border: 1px solid #333;
       border-radius: 8px; font-size: 13px; padding: 10px 12px;
@@ -32,6 +20,7 @@
     }
     .mapboxgl-popup-content strong { color: #fff; }
     .mapboxgl-popup-tip { border-top-color: #16161a !important; }
+    .mapboxgl-popup-close-button { color: #888; }
 
     .no-token {
       position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -68,30 +57,113 @@
         zoom: 11,
       });
 
-      map.on("load", async () => {
-        // Current location dot
-        const meEl = document.createElement("div");
-        meEl.className = "me-dot";
-        new mapboxgl.Marker(meEl).setLngLat([-122.3999, 37.7946]).addTo(map);
+      // Data-driven color: severity -> pin color
+      const SEVERITY_COLOR = [
+        "match", ["get", "severity"],
+        "red", "#FF3B30",
+        "yellow", "#FFB020",
+        "#888888", // fallback
+      ];
 
-        // Alert pins from the API
+      // Radius that grows smoothly with zoom (GPU-rendered, no jank)
+      const zoomRadius = (small, big) => [
+        "interpolate", ["linear"], ["zoom"],
+        10, small,
+        15, big,
+      ];
+
+      map.on("load", async () => {
         const today = new Date();
         today.setDate(today.getDate() + 1);
         const date = today.toISOString().split("T")[0];
 
         const res = await fetch(`/api/pins?route_id=rt_alex_home&date=${date}`);
         const data = await res.json();
+        const origin = data.origin;
 
-        (data.pins || []).forEach(pin => {
-          const el = document.createElement("div");
-          el.className = `pin pin-${pin.severity}`;
-          new mapboxgl.Marker(el)
-            .setLngLat([pin.lon, pin.lat])
-            .setPopup(new mapboxgl.Popup({ offset: 16 }).setHTML(
-              `<strong>${pin.name}</strong><br>${pin.reason}`
-            ))
+        // --- Current-location dot (native layers + animated pulse) ---
+        map.addSource("me", {
+          type: "geojson",
+          data: { type: "Point", coordinates: [origin.lon, origin.lat] },
+        });
+        map.addLayer({
+          id: "me-pulse", type: "circle", source: "me",
+          paint: { "circle-color": "#00E5C7", "circle-radius": 8, "circle-opacity": 0.4 },
+        });
+        map.addLayer({
+          id: "me-core", type: "circle", source: "me",
+          paint: {
+            "circle-color": "#00E5C7", "circle-radius": 6,
+            "circle-stroke-width": 2, "circle-stroke-color": "#0A0A0B",
+          },
+        });
+        // Expanding, fading ring
+        let t = 0;
+        setInterval(() => {
+          t = (t + 0.5) % 18;
+          map.setPaintProperty("me-pulse", "circle-radius", 8 + t);
+          map.setPaintProperty("me-pulse", "circle-opacity", 0.4 * (1 - t / 18));
+        }, 60);
+
+        // --- Alert pins as native layers (GeoJSON source) ---
+        const features = (data.pins || []).map(p => ({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+          properties: { name: p.name, reason: p.reason, severity: p.severity },
+        }));
+        map.addSource("alerts", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features },
+        });
+
+        // Soft glow (large, blurred)
+        map.addLayer({
+          id: "alert-glow", type: "circle", source: "alerts",
+          paint: {
+            "circle-color": SEVERITY_COLOR,
+            "circle-radius": zoomRadius(10, 20),
+            "circle-blur": 1,
+            "circle-opacity": 0.5,
+          },
+        });
+        // Solid core
+        map.addLayer({
+          id: "alert-core", type: "circle", source: "alerts",
+          paint: {
+            "circle-color": SEVERITY_COLOR,
+            "circle-radius": zoomRadius(5, 9),
+            "circle-stroke-width": 2,
+            "circle-stroke-color": "#0A0A0B",
+          },
+        });
+        // Text labels (scale with zoom, dark halo, auto-hide on overlap)
+        map.addLayer({
+          id: "alert-label", type: "symbol", source: "alerts",
+          layout: {
+            "text-field": ["get", "name"],
+            "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Regular"],
+            "text-size": ["interpolate", ["linear"], ["zoom"], 10, 11, 15, 15],
+            "text-offset": [0, 1.4],
+            "text-anchor": "top",
+            "text-allow-overlap": false,
+          },
+          paint: {
+            "text-color": "#E8E8E8",
+            "text-halo-color": "#0A0A0B",
+            "text-halo-width": 1.5,
+          },
+        });
+
+        // Click a pin -> popup with the reason
+        map.on("click", "alert-core", (e) => {
+          const p = e.features[0].properties;
+          new mapboxgl.Popup({ offset: 12 })
+            .setLngLat(e.features[0].geometry.coordinates)
+            .setHTML(`<strong>${p.name}</strong><br>${p.reason}`)
             .addTo(map);
         });
+        map.on("mouseenter", "alert-core", () => { map.getCanvas().style.cursor = "pointer"; });
+        map.on("mouseleave", "alert-core", () => { map.getCanvas().style.cursor = ""; });
       });
     }
   </script>
