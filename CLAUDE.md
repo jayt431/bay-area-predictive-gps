@@ -83,6 +83,11 @@ Long-term goals:
 - Notification bell (top-right) with unread count.
 - Backend prep done: `get_alert_pins()` in mock_data.py, `GET /api/pins`,
   and `/map-test` page. Gated on a `MAPBOX_TOKEN` env var.
+- Pins render as native GL layers (GeoJSON source + circle/symbol layers),
+  not HTML markers — this fixed the zoom-scaling jank.
+- Minor polish deferred: zoom still feels very slightly non-smooth; not
+  worth chasing yet. Real search panel + notification bell await the Figma
+  design before being built.
 
 ## Future directions (not yet started)
 
