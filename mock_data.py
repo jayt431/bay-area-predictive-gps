@@ -206,6 +206,48 @@ def _pin_reason(event: dict, severity: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# SINGLE-USER GPS MODEL (new)
+#
+# One user with a fixed home base, plus a Bay Area pool of possible
+# disruptions. The frontend draws a route from HOME to a chosen destination
+# and surfaces the disruptions that fall near that route. This replaces the
+# per-persona model in the UI; the ROUTINES/events above are kept only for
+# the agent and the /map-test page.
+# ---------------------------------------------------------------------------
+
+HOME = {"label": "Home · SoMa, San Francisco", "lat": 37.7785, "lon": -122.4056}
+
+_DISRUPTIONS = [
+    {"id": "d1", "name": "Concert at Chase Center", "type": "event",
+     "lat": 37.7680, "lon": -122.3874, "time": "Doors 6:00 PM",
+     "note": "18,000 attendees; heavy load around Mission Bay."},
+    {"id": "d2", "name": "Giants game at Oracle Park", "type": "event",
+     "lat": 37.7786, "lon": -122.3893, "time": "First pitch 7:15 PM",
+     "note": "Congestion along the Embarcadero and 3rd St."},
+    {"id": "d3", "name": "Bay Bridge on-ramp construction", "type": "construction",
+     "lat": 37.7918, "lon": -122.3908, "time": "All day",
+     "note": "Lane closures near the Bay Bridge approach."},
+    {"id": "d4", "name": "Protest march, Civic Center", "type": "protest",
+     "lat": 37.7797, "lon": -122.4181, "time": "Starts 4:00 PM",
+     "note": "Rolling street closures around Market & Van Ness."},
+    {"id": "d5", "name": "Crash on US-101 NB", "type": "incident",
+     "lat": 37.7666, "lon": -122.4064, "time": "Reported 20 min ago",
+     "note": "Two lanes blocked; residual delays."},
+    {"id": "d6", "name": "Ferry Plaza Farmers Market", "type": "market",
+     "lat": 37.7956, "lon": -122.3934, "time": "8:00 AM - 2:00 PM",
+     "note": "Small, recurring; minor foot traffic on the Embarcadero."},
+    {"id": "d7", "name": "Flooding on the Embarcadero", "type": "weather",
+     "lat": 37.8000, "lon": -122.3980, "time": "High tide ~5:30 PM",
+     "note": "King-tide ponding near Pier 7."},
+]
+
+
+def get_disruptions() -> list[dict]:
+    """Return the Bay Area pool of possible disruptions (mocked for now)."""
+    return [dict(d) for d in _DISRUPTIONS]
+
+
+# ---------------------------------------------------------------------------
 # TRAFFIC baseline (mocked). Real: Google Maps Routes API typical traffic.
 # ---------------------------------------------------------------------------
 

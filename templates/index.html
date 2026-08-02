@@ -4,329 +4,406 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bay Area Predictive GPS</title>
+
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f0f2f5;
-      color: #1a1a2e;
-      min-height: 100vh;
+    :root {
+      --bg: #0A0A0B; --ink: #E8E8E8; --muted: #888; --line: #2a2a2e;
+      --panel: rgba(16,16,20,0.72); --accent: #00E5C7;
+      --red: #FF3B30; --yellow: #FFB020;
+      --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #map { height: 100%; width: 100%; }
+    body { background: var(--bg); font-family: var(--sans); color: var(--ink); overflow: hidden; }
 
-    header {
-      background: #1a1a2e;
-      color: #fff;
-      padding: 20px 32px;
+    .glass {
+      background: var(--panel);
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     }
-    header h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: 0.01em; }
-    header p  { font-size: 0.85rem; color: #8892b0; margin-top: 4px; }
-
-    .container {
-      max-width: 640px;
-      margin: 40px auto;
-      padding: 0 20px;
-    }
-
-    .card {
-      background: #fff;
-      border-radius: 12px;
-      padding: 28px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-      margin-bottom: 24px;
+    .mono-label {
+      font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--muted);
     }
 
-    label {
-      display: block;
-      font-size: 0.8rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: #555;
-      margin-bottom: 6px;
+    /* ---- Search panel (bottom-left) ---- */
+    #search-panel { position: absolute; z-index: 3; left: 20px; bottom: 20px; width: 340px; padding: 18px; }
+    #search-panel .mono-label { margin-bottom: 8px; display: block; }
+    .search-wrap { position: relative; }
+    #search-input {
+      width: 100%; background: rgba(0,0,0,0.35); border: 1px solid var(--line);
+      border-radius: 10px; padding: 12px 14px; color: var(--ink);
+      font-size: 15px; font-family: var(--sans); outline: none; transition: border-color 0.15s;
+    }
+    #search-input::placeholder { color: #666; }
+    #search-input:focus { border-color: var(--accent); }
+
+    /* Geocoding suggestions dropdown (opens upward, above the input) */
+    #suggestions {
+      position: absolute; left: 0; right: 0; bottom: calc(100% + 8px);
+      display: none; max-height: 260px; overflow-y: auto; padding: 6px;
+    }
+    #suggestions.open { display: block; }
+    .sugg-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+    .sugg-item:hover, .sugg-item.hi { background: rgba(255,255,255,0.06); }
+    .sugg-name { font-size: 14px; color: var(--ink); }
+    .sugg-sub  { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+
+    .quick-title { margin: 16px 0 8px; }
+    .quick-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .quick-chip {
+      font-size: 12px; padding: 7px 12px; border-radius: 20px; cursor: pointer;
+      background: rgba(255,255,255,0.05); border: 1px solid var(--line); color: var(--ink);
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .quick-chip:hover { background: rgba(0,229,199,0.10); border-color: var(--accent); }
+
+    /* ---- Route summary (top-left) ---- */
+    #route-summary { position: absolute; z-index: 3; top: 20px; left: 20px; width: 300px; padding: 16px 18px; display: none; }
+    #route-summary.open { display: block; }
+    .rs-dest { font-size: 16px; font-weight: 600; margin: 6px 0 12px; line-height: 1.3; }
+    .rs-stats { display: flex; gap: 24px; }
+    .rs-stat .num { font-size: 22px; font-weight: 700; font-family: var(--mono); }
+    .rs-stat .num small { font-size: 12px; color: var(--muted); font-weight: 400; }
+    .rs-stat .cap { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+    .rs-stat .num.warn { color: var(--yellow); }
+    .rs-stat .num.danger { color: var(--red); }
+
+    /* ---- Notification bell (top-right) ---- */
+    #bell {
+      position: absolute; z-index: 3; top: 20px; right: 20px;
+      width: 46px; height: 46px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--ink);
+    }
+    #bell svg { width: 20px; height: 20px; }
+    #bell-badge {
+      position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px;
+      border-radius: 10px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700;
+      font-family: var(--mono); display: none; align-items: center; justify-content: center; border: 2px solid var(--bg);
     }
 
-    select, input[type="date"] {
-      width: 100%;
-      padding: 10px 14px;
-      border: 1.5px solid #dde1e7;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      color: #1a1a2e;
-      background: #fafafa;
-      margin-bottom: 18px;
-      appearance: none;
-    }
-    select:focus, input[type="date"]:focus {
-      outline: none;
-      border-color: #4f8ef7;
-      background: #fff;
-    }
+    /* ---- Alert panel (top-right, under bell) ---- */
+    #alert-panel { position: absolute; z-index: 3; top: 76px; right: 20px; width: 330px; padding: 8px; display: none; }
+    #alert-panel.open { display: block; }
+    .alert-panel-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
+    .alert-item { display: flex; gap: 12px; padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .alert-item:last-child { border-bottom: none; }
+    .alert-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+    .alert-dot.red    { background: var(--red);    box-shadow: 0 0 8px 1px rgba(255,59,48,0.6); }
+    .alert-dot.yellow { background: var(--yellow); box-shadow: 0 0 8px 1px rgba(255,176,32,0.5); }
+    .alert-name { font-size: 14px; color: var(--ink); margin-bottom: 3px; }
+    .alert-reason { font-size: 12px; color: var(--muted); line-height: 1.45; }
+    .alert-empty { padding: 20px 12px; color: var(--muted); font-size: 13px; text-align: center; }
 
-    button {
-      width: 100%;
-      padding: 12px;
-      background: #1a1a2e;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    button:hover  { background: #2d2d4e; }
-    button:active { background: #111127; }
-    button:disabled { background: #999; cursor: not-allowed; }
+    .mapboxgl-popup-content { background: #16161a; color: var(--ink); border: 1px solid #333; border-radius: 8px; font-size: 13px; padding: 10px 12px; font-family: var(--mono); }
+    .mapboxgl-popup-content strong { color: #fff; }
+    .mapboxgl-popup-tip { border-top-color: #16161a !important; }
+    .mapboxgl-popup-close-button { color: var(--muted); }
+    .mapboxgl-ctrl-bottom-right { display: none; }
 
-    /* Alert card */
-    #result { display: none; }
-
-    .risk-badge {
-      display: inline-block;
-      padding: 4px 14px;
-      border-radius: 20px;
-      font-size: 0.75rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 14px;
-    }
-    .risk-none   { background: #d4edda; color: #1a6b35; }
-    .risk-low    { background: #fff3cd; color: #856404; }
-    .risk-medium { background: #ffe0b2; color: #a64d00; }
-    .risk-high   { background: #f8d7da; color: #842029; }
-
-    .alert-headline {
-      font-size: 1.15rem;
-      font-weight: 700;
-      margin-bottom: 14px;
-      line-height: 1.35;
-    }
-
-    .alert-section { margin-bottom: 14px; }
-    .alert-section-label {
-      font-size: 0.72rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #888;
-      margin-bottom: 4px;
-    }
-    .alert-section-body {
-      font-size: 0.92rem;
-      line-height: 1.55;
-      color: #333;
-    }
-
-    .divider {
-      border: none;
-      border-top: 1px solid #eee;
-      margin: 18px 0;
-    }
-
-    /* Dry-run data */
-    .dry-run-note {
-      font-size: 0.82rem;
-      color: #888;
-      background: #f7f8fa;
-      border-left: 3px solid #ccc;
-      padding: 10px 14px;
-      border-radius: 4px;
-      margin-bottom: 14px;
-    }
-
-    details summary {
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: #555;
-      cursor: pointer;
-      padding: 6px 0;
-    }
-    details pre {
-      background: #f4f5f7;
-      border-radius: 6px;
-      padding: 12px;
-      font-size: 0.75rem;
-      overflow-x: auto;
-      margin-top: 8px;
-      line-height: 1.5;
-    }
-
-    .spinner {
-      display: inline-block;
-      width: 18px; height: 18px;
-      border: 2px solid #fff;
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin 0.7s linear infinite;
-      vertical-align: middle;
-      margin-right: 8px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .error-msg {
-      color: #842029;
-      background: #f8d7da;
-      border-radius: 8px;
-      padding: 12px 16px;
-      font-size: 0.9rem;
-    }
+    .no-token { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink); text-align: center; padding: 40px; line-height: 1.6; }
+    .no-token code { background: #222; padding: 2px 6px; border-radius: 4px; color: var(--accent); }
   </style>
 </head>
 <body>
+  <div id="map"></div>
 
-<header>
-  <h1>Bay Area Predictive GPS</h1>
-  <p>Know before you go — commute alerts generated a day ahead</p>
-</header>
-
-<div class="container">
-
-  <div class="card">
-    <label for="route">Commuter route</label>
-    <select id="route">
-      <option value="">Loading routes…</option>
-    </select>
-
-    <label for="date">Date to analyze</label>
-    <input type="date" id="date" />
-
-    <button id="analyze-btn" onclick="analyze()">Analyze route</button>
+  <!-- Route summary (top-left) -->
+  <div id="route-summary" class="glass">
+    <span class="mono-label">Route</span>
+    <div class="rs-dest" id="rs-dest">—</div>
+    <div class="rs-stats">
+      <div class="rs-stat"><div class="num" id="rs-eta">—</div><div class="cap">ETA</div></div>
+      <div class="rs-stat"><div class="num" id="rs-dist">—</div><div class="cap">Distance</div></div>
+      <div class="rs-stat"><div class="num" id="rs-alerts">—</div><div class="cap">On route</div></div>
+    </div>
   </div>
 
-  <div class="card" id="result"></div>
+  <!-- Notification bell -->
+  <div id="bell" class="glass" onclick="toggleAlerts()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+      <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+    </svg>
+    <span id="bell-badge">0</span>
+  </div>
 
-</div>
+  <!-- Alert panel -->
+  <div id="alert-panel" class="glass">
+    <div class="alert-panel-head">
+      <span class="mono-label">Disruptions on route</span>
+      <span class="mono-label" id="alert-count"></span>
+    </div>
+    <div id="alert-list"></div>
+  </div>
 
-<script>
-  // Populate route selector from API
-  async function loadRoutes() {
-    const sel = document.getElementById("route");
-    try {
-      const res = await fetch("/api/routes");
-      const routes = await res.json();
-      sel.innerHTML = routes.map(r =>
-        `<option value="${r.route_id}">${r.user} — ${r.label} (${r.usual_departure})</option>`
-      ).join("");
-    } catch {
-      sel.innerHTML = '<option value="">Could not load routes</option>';
+  <!-- Search panel -->
+  <div id="search-panel" class="glass">
+    <span class="mono-label">Destination</span>
+    <div class="search-wrap">
+      <input id="search-input" placeholder="Where to?" autocomplete="off" />
+      <div id="suggestions" class="glass"></div>
+    </div>
+    <div class="mono-label quick-title">Suggested</div>
+    <div class="quick-row" id="quick-row"></div>
+  </div>
+
+  <script>
+    const TOKEN = "{{ mapbox_token }}";
+
+    // Bay Area bounding box + center, to scope geocoding results
+    const BAY_BBOX = "-122.65,37.20,-121.70,38.20";
+    const BAY_PROX = "-122.42,37.77";
+
+    // Distance thresholds (km) from the route line -> severity
+    const NEAR_RED = 0.5;    // basically on your path
+    const NEAR_YELLOW = 2.0; // close enough to spill over
+
+    // A few one-tap destinations so you can demo without typing
+    const QUICK = [
+      { name: "Chase Center", lon: -122.3874, lat: 37.7680 },
+      { name: "SFO Airport",  lon: -122.3790, lat: 37.6213 },
+      { name: "Oracle Park",  lon: -122.3893, lat: 37.7786 },
+      { name: "Downtown Berkeley", lon: -122.2680, lat: 37.8700 },
+      { name: "Ferry Building", lon: -122.3934, lat: 37.7956 },
+    ];
+
+    let home = null;         // { label, lat, lon }
+    let disruptions = [];    // full Bay Area pool
+    let suggIndex = -1;      // keyboard-highlighted suggestion
+
+    if (!TOKEN) {
+      document.getElementById("map").innerHTML =
+        '<div class="no-token">No Mapbox token found.<br>Add <code>MAPBOX_TOKEN=pk.your_token</code> to your .env, then restart.</div>';
+    } else {
+      boot();
     }
-  }
 
-  // Default date to tomorrow
-  function setDefaultDate() {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    document.getElementById("date").value = d.toISOString().split("T")[0];
-  }
+    async function boot() {
+      // Load home base + disruption pool from our backend
+      const [cfg, dis] = await Promise.all([
+        fetch("/api/config").then(r => r.json()),
+        fetch("/api/disruptions").then(r => r.json()),
+      ]);
+      home = cfg.home;
+      disruptions = dis.disruptions || [];
 
-  async function analyze() {
-    const routeId = document.getElementById("route").value;
-    const date    = document.getElementById("date").value;
-    const btn     = document.getElementById("analyze-btn");
-    const result  = document.getElementById("result");
-
-    if (!routeId || !date) {
-      showError("Please select a route and a date.");
-      return;
-    }
-
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span>Analyzing…';
-    result.style.display = "none";
-
-    try {
-      const res  = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ route_id: routeId, date }),
+      mapboxgl.accessToken = TOKEN;
+      window.map = new mapboxgl.Map({
+        container: "map",
+        style: "mapbox://styles/mapbox/dark-v11",
+        center: [home.lon, home.lat],
+        zoom: 12,
       });
-      const data = await res.json();
 
-      if (data.error) { showError(data.error); return; }
+      const SEVERITY_COLOR = ["match", ["get", "severity"], "red", "#FF3B30", "yellow", "#FFB020", "#888"];
+      const zoomRadius = (s, b) => ["interpolate", ["linear"], ["zoom"], 10, s, 15, b];
 
-      if (data.mode === "agent") {
-        renderAlert(data.alert, data.date);
-      } else {
-        renderDryRun(data);
-      }
-    } catch (err) {
-      showError("Request failed. Is the server running?");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Analyze route";
+      map.on("load", () => {
+        // Empty sources; filled as the user routes (init once, update in place)
+        map.addSource("route",  { type: "geojson", data: emptyFC() });
+        map.addSource("me",     { type: "geojson", data: pt(home.lon, home.lat) });
+        map.addSource("dest",   { type: "geojson", data: emptyFC() });
+        map.addSource("alerts", { type: "geojson", data: emptyFC() });
+
+        // Route line: soft glow under a solid cyan line
+        map.addLayer({ id: "route-glow", type: "line", source: "route",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": "#00E5C7", "line-width": 10, "line-blur": 8, "line-opacity": 0.35 } });
+        map.addLayer({ id: "route-core", type: "line", source: "route",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": "#00E5C7", "line-width": 3, "line-opacity": 0.9 } });
+
+        // Home dot + pulse
+        map.addLayer({ id: "me-pulse", type: "circle", source: "me",
+          paint: { "circle-color": "#00E5C7", "circle-radius": 8, "circle-opacity": 0.4 } });
+        map.addLayer({ id: "me-core", type: "circle", source: "me",
+          paint: { "circle-color": "#00E5C7", "circle-radius": 6, "circle-stroke-width": 2, "circle-stroke-color": "#0A0A0B" } });
+        let t = 0;
+        setInterval(() => { t = (t + 0.5) % 18;
+          map.setPaintProperty("me-pulse", "circle-radius", 8 + t);
+          map.setPaintProperty("me-pulse", "circle-opacity", 0.4 * (1 - t / 18));
+        }, 60);
+
+        // Destination marker (white, distinct from disruptions)
+        map.addLayer({ id: "dest-core", type: "circle", source: "dest",
+          paint: { "circle-color": "#FFFFFF", "circle-radius": 7, "circle-stroke-width": 3, "circle-stroke-color": "#00E5C7" } });
+
+        // Disruption pins (glow, core, label) — sit on top
+        map.addLayer({ id: "alert-glow", type: "circle", source: "alerts",
+          paint: { "circle-color": SEVERITY_COLOR, "circle-radius": zoomRadius(10, 20), "circle-blur": 1, "circle-opacity": 0.5 } });
+        map.addLayer({ id: "alert-core", type: "circle", source: "alerts",
+          paint: { "circle-color": SEVERITY_COLOR, "circle-radius": zoomRadius(5, 9), "circle-stroke-width": 2, "circle-stroke-color": "#0A0A0B" } });
+        map.addLayer({ id: "alert-label", type: "symbol", source: "alerts",
+          layout: { "text-field": ["get", "name"], "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Regular"],
+                    "text-size": ["interpolate", ["linear"], ["zoom"], 10, 11, 15, 15], "text-offset": [0, 1.4],
+                    "text-anchor": "top", "text-allow-overlap": false },
+          paint: { "text-color": "#E8E8E8", "text-halo-color": "#0A0A0B", "text-halo-width": 1.5 } });
+
+        map.on("click", "alert-core", (e) => {
+          const p = e.features[0].properties;
+          new mapboxgl.Popup({ offset: 12 }).setLngLat(e.features[0].geometry.coordinates)
+            .setHTML(`<strong>${p.name}</strong><br>${p.reason}`).addTo(map);
+        });
+        map.on("mouseenter", "alert-core", () => map.getCanvas().style.cursor = "pointer");
+        map.on("mouseleave", "alert-core", () => map.getCanvas().style.cursor = "");
+
+        renderQuick();
+      });
+
+      wireSearch();
     }
-  }
 
-  function renderAlert(alert, date) {
-    const risk  = (alert.risk || "unknown").toLowerCase();
-    const result = document.getElementById("result");
-    result.innerHTML = `
-      <span class="risk-badge risk-${risk}">Risk: ${alert.risk || "—"}</span>
-      <div class="alert-headline">${alert.headline || "No headline"}</div>
-      <hr class="divider" />
-      <div class="alert-section">
-        <div class="alert-section-label">Why</div>
-        <div class="alert-section-body">${alert.why || "—"}</div>
-      </div>
-      <div class="alert-section">
-        <div class="alert-section-label">Recommendation</div>
-        <div class="alert-section-body">${alert.recommendation || "—"}</div>
-      </div>
-      <hr class="divider" />
-      <details>
-        <summary>Raw agent output</summary>
-        <pre>${escHtml(alert.raw || "")}</pre>
-      </details>
-    `;
-    result.style.display = "block";
-  }
+    // ---- Search: geocode as you type, pick a suggestion ----
+    function wireSearch() {
+      const input = document.getElementById("search-input");
+      let timer = null;
+      input.addEventListener("input", () => {
+        clearTimeout(timer);
+        const q = input.value.trim();
+        if (q.length < 3) { closeSuggestions(); return; }
+        timer = setTimeout(() => geocode(q), 250);
+      });
+      input.addEventListener("keydown", (e) => {
+        const items = document.querySelectorAll(".sugg-item");
+        if (!items.length) return;
+        if (e.key === "ArrowDown") { e.preventDefault(); suggIndex = Math.min(suggIndex + 1, items.length - 1); paintHi(items); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); suggIndex = Math.max(suggIndex - 1, 0); paintHi(items); }
+        else if (e.key === "Enter" && suggIndex >= 0) { e.preventDefault(); items[suggIndex].click(); }
+        else if (e.key === "Escape") { closeSuggestions(); }
+      });
+      document.addEventListener("click", (e) => {
+        if (!document.getElementById("search-panel").contains(e.target)) closeSuggestions();
+      });
+    }
 
-  function renderDryRun(data) {
-    const result = document.getElementById("result");
-    result.innerHTML = `
-      <div class="dry-run-note">
-        <strong>Dry-run mode</strong> — no Anthropic API key set. Showing raw tool data below.
-        Add <code>ANTHROPIC_API_KEY</code> to .env to see the full AI-generated alert.
-      </div>
-      <details open>
-        <summary>Events</summary>
-        <pre>${escHtml(prettyJson(data.data.events))}</pre>
-      </details>
-      <details>
-        <summary>Weather</summary>
-        <pre>${escHtml(prettyJson(data.data.weather))}</pre>
-      </details>
-      <details>
-        <summary>Traffic baseline</summary>
-        <pre>${escHtml(prettyJson(data.data.traffic_baseline))}</pre>
-      </details>
-      <details>
-        <summary>News</summary>
-        <pre>${escHtml(prettyJson(data.data.news))}</pre>
-      </details>
-    `;
-    result.style.display = "block";
-  }
+    async function geocode(q) {
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
+        + `?access_token=${TOKEN}&country=US&limit=5&bbox=${BAY_BBOX}&proximity=${BAY_PROX}`;
+      try {
+        const data = await (await fetch(url)).json();
+        renderSuggestions(data.features || []);
+      } catch { closeSuggestions(); }
+    }
 
-  function showError(msg) {
-    const result = document.getElementById("result");
-    result.innerHTML = `<div class="error-msg">${escHtml(msg)}</div>`;
-    result.style.display = "block";
-  }
+    function renderSuggestions(features) {
+      const box = document.getElementById("suggestions");
+      suggIndex = -1;
+      if (!features.length) { closeSuggestions(); return; }
+      box.innerHTML = features.map(f => {
+        const [lon, lat] = f.center;
+        const name = f.text;
+        const sub = f.place_name.replace(f.text + ", ", "");
+        return `<div class="sugg-item" onclick="pickDestination(${lon},${lat},'${escape(name)}')">
+                  <div class="sugg-name">${name}</div><div class="sugg-sub">${sub}</div></div>`;
+      }).join("");
+      box.classList.add("open");
+    }
+    function paintHi(items) { items.forEach((el, i) => el.classList.toggle("hi", i === suggIndex)); }
+    function closeSuggestions() { document.getElementById("suggestions").classList.remove("open"); suggIndex = -1; }
 
-  function prettyJson(val) {
-    try { return JSON.stringify(JSON.parse(val), null, 2); }
-    catch { return String(val); }
-  }
+    function renderQuick() {
+      document.getElementById("quick-row").innerHTML = QUICK.map(d =>
+        `<div class="quick-chip" onclick="pickDestination(${d.lon},${d.lat},'${escape(d.name)}')">${d.name}</div>`
+      ).join("");
+    }
 
-  function escHtml(s) {
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  }
+    // ---- Pick a destination: route to it, then find disruptions on the way ----
+    async function pickDestination(lon, lat, nameEnc) {
+      const name = unescape(nameEnc);
+      document.getElementById("search-input").value = name;
+      closeSuggestions();
 
-  loadRoutes();
-  setDefaultDate();
-</script>
+      map.getSource("dest").setData(pt(lon, lat));
+
+      // Real driving route from home -> destination
+      const durl = `https://api.mapbox.com/directions/v5/mapbox/driving/`
+        + `${home.lon},${home.lat};${lon},${lat}?geometries=geojson&overview=full&access_token=${TOKEN}`;
+      const dir = await (await fetch(durl)).json();
+      if (!dir.routes || !dir.routes.length) return;
+      const route = dir.routes[0];
+      const line = route.geometry; // GeoJSON LineString
+
+      map.getSource("route").setData({ type: "Feature", geometry: line, properties: {} });
+
+      // Fit the map to the whole route
+      const coords = line.coordinates;
+      const b = coords.reduce((bb, c) => bb.extend(c), new mapboxgl.LngLatBounds(coords[0], coords[0]));
+      map.fitBounds(b, { padding: { top: 120, bottom: 160, left: 380, right: 360 }, duration: 900 });
+
+      // Which disruptions fall near this route line?
+      const turfLine = turf.lineString(coords);
+      const onRoute = [];
+      disruptions.forEach(d => {
+        const km = turf.pointToLineDistance(turf.point([d.lon, d.lat]), turfLine, { units: "kilometers" });
+        let severity = null;
+        if (km <= NEAR_RED) severity = "red";
+        else if (km <= NEAR_YELLOW) severity = "yellow";
+        if (!severity) return;
+        onRoute.push({ ...d, severity, km,
+          reason: `${d.note} (${d.time} · ${km.toFixed(1)} km from route)` });
+      });
+      onRoute.sort((a, b) => a.km - b.km);
+
+      // Update pins
+      map.getSource("alerts").setData({
+        type: "FeatureCollection",
+        features: onRoute.map(d => ({
+          type: "Feature", geometry: pt(d.lon, d.lat),
+          properties: { name: d.name, reason: d.reason, severity: d.severity },
+        })),
+      });
+
+      updateSummary(name, route, onRoute);
+      updateBell(onRoute);
+      renderAlertList(onRoute);
+    }
+
+    function updateSummary(name, route, onRoute) {
+      document.getElementById("route-summary").classList.add("open");
+      document.getElementById("rs-dest").textContent = name;
+      const mins = Math.round(route.duration / 60);
+      const miles = (route.distance / 1609.34).toFixed(1);
+      document.getElementById("rs-eta").innerHTML = `${mins}<small> min</small>`;
+      document.getElementById("rs-dist").innerHTML = `${miles}<small> mi</small>`;
+      const reds = onRoute.filter(d => d.severity === "red").length;
+      const el = document.getElementById("rs-alerts");
+      el.textContent = onRoute.length;
+      el.className = "num" + (reds ? " danger" : onRoute.length ? " warn" : "");
+    }
+
+    function updateBell(onRoute) {
+      const badge = document.getElementById("bell-badge");
+      if (!onRoute.length) { badge.style.display = "none"; return; }
+      badge.style.display = "flex";
+      badge.textContent = onRoute.length;
+      badge.style.background = onRoute.some(d => d.severity === "red") ? "var(--red)" : "var(--yellow)";
+    }
+
+    function renderAlertList(onRoute) {
+      document.getElementById("alert-count").textContent = onRoute.length ? `${onRoute.length}` : "";
+      const el = document.getElementById("alert-list");
+      if (!onRoute.length) {
+        el.innerHTML = '<div class="alert-empty">Nothing on this route. You\'re clear.</div>';
+        return;
+      }
+      el.innerHTML = onRoute.map(d => `
+        <div class="alert-item">
+          <div class="alert-dot ${d.severity}"></div>
+          <div><div class="alert-name">${d.name}</div><div class="alert-reason">${d.reason}</div></div>
+        </div>`).join("");
+    }
+
+    function toggleAlerts() { document.getElementById("alert-panel").classList.toggle("open"); }
+
+    function pt(lon, lat) { return { type: "Point", coordinates: [lon, lat] }; }
+    function emptyFC() { return { type: "FeatureCollection", features: [] }; }
+  </script>
 </body>
 </html>

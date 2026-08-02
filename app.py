@@ -28,7 +28,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", mapbox_token=os.environ.get("MAPBOX_TOKEN", ""))
 
 
 @app.route("/api/health")
@@ -76,6 +76,19 @@ def get_pins():
         "origin": {"lat": origin["lat"], "lon": origin["lon"]},
         "pins": mock_data.get_alert_pins(route_id, date),
     })
+
+
+@app.route("/api/config")
+def config():
+    """Single-user config: the fixed home base the map starts from."""
+    return jsonify({"home": mock_data.HOME})
+
+
+@app.route("/api/disruptions")
+def disruptions():
+    """The Bay Area pool of possible disruptions. The frontend matches these
+    against the drawn route and keeps only the ones that fall near it."""
+    return jsonify({"disruptions": mock_data.get_disruptions()})
 
 
 @app.route("/map-test")
