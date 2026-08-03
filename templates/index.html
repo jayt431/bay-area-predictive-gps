@@ -64,6 +64,25 @@
     }
     .quick-chip:hover { background: rgba(0,229,199,0.10); border-color: var(--accent); }
 
+    /* Saved destinations */
+    .saved-chip {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 12px; padding: 7px 10px 7px 12px; border-radius: 20px;
+      background: rgba(255,255,255,0.05); border: 1px solid var(--line); color: var(--ink);
+      transition: border-color 0.12s;
+    }
+    .saved-chip:hover { border-color: var(--accent); }
+    .saved-chip > .go { cursor: pointer; }
+    .saved-chip > .x { cursor: pointer; color: var(--muted); font-size: 15px; line-height: 1; }
+    .saved-chip > .x:hover { color: var(--red); }
+
+    /* Star toggle in the route summary */
+    .rs-head { display: flex; justify-content: space-between; align-items: center; }
+    .star-btn { background: none; border: none; cursor: pointer; color: var(--muted); padding: 2px; display: flex; }
+    .star-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .star-btn.on { color: var(--accent); }
+    .star-btn.on svg { fill: var(--accent); stroke: var(--accent); }
+
     /* ---- Route summary (top-left) ---- */
     #route-summary { position: absolute; z-index: 3; top: 20px; left: 20px; width: 300px; padding: 16px 18px; display: none; }
     #route-summary.open { display: block; }
@@ -116,7 +135,14 @@
 
   <!-- Route summary (top-left) -->
   <div id="route-summary" class="glass">
-    <span class="mono-label">Route</span>
+    <div class="rs-head">
+      <span class="mono-label">Route</span>
+      <button id="star-btn" class="star-btn" onclick="toggleSaveCurrent()" title="Save destination">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+        </svg>
+      </button>
+    </div>
     <div class="rs-dest" id="rs-dest">—</div>
     <div class="rs-stats">
       <div class="rs-stat"><div class="num" id="rs-eta">—</div><div class="cap">ETA</div></div>
@@ -150,6 +176,10 @@
       <input id="search-input" placeholder="Where to?" autocomplete="off" />
       <div id="suggestions" class="glass"></div>
     </div>
+    <div id="saved-section" style="display:none">
+      <div class="mono-label quick-title">Saved</div>
+      <div class="quick-row" id="saved-row"></div>
+    </div>
     <div class="mono-label quick-title">Suggested</div>
     <div class="quick-row" id="quick-row"></div>
   </div>
@@ -177,6 +207,9 @@
     let home = null;         // { label, lat, lon }
     let disruptions = [];    // full Bay Area pool
     let suggIndex = -1;      // keyboard-highlighted suggestion
+    let currentDest = null;  // the destination currently routed to
+    const SAVED_KEY = "bapg_saved";
+    let saved = loadSaved(); // saved destinations, persisted in localStorage
 
     if (!TOKEN) {
       document.getElementById("map").innerHTML =
@@ -255,6 +288,7 @@
         map.on("mouseleave", "alert-core", () => map.getCanvas().style.cursor = "");
 
         renderQuick();
+        renderSaved();
       });
 
       wireSearch();
@@ -314,11 +348,54 @@
       ).join("");
     }
 
+    // ---- Saved destinations (persisted in the browser via localStorage) ----
+    function loadSaved() {
+      try { return JSON.parse(localStorage.getItem(SAVED_KEY)) || []; }
+      catch { return []; }
+    }
+    function persistSaved() { localStorage.setItem(SAVED_KEY, JSON.stringify(saved)); }
+    function isSaved(name) { return saved.some(s => s.name === name); }
+
+    function toggleSaveCurrent() {
+      if (!currentDest) return;
+      if (isSaved(currentDest.name)) saved = saved.filter(s => s.name !== currentDest.name);
+      else saved.push({ ...currentDest });
+      persistSaved(); renderSaved(); updateStar();
+    }
+
+    function removeSaved(nameEnc) {
+      const name = unescape(nameEnc);
+      saved = saved.filter(s => s.name !== name);
+      persistSaved(); renderSaved(); updateStar();
+    }
+
+    function renderSaved() {
+      const section = document.getElementById("saved-section");
+      const row = document.getElementById("saved-row");
+      if (!saved.length) { section.style.display = "none"; return; }
+      section.style.display = "block";
+      row.innerHTML = saved.map(s => `
+        <div class="saved-chip">
+          <span class="go" onclick="pickDestination(${s.lon},${s.lat},'${escape(s.name)}')">${s.name}</span>
+          <span class="x" onclick="removeSaved('${escape(s.name)}')" title="Remove">&times;</span>
+        </div>`).join("");
+    }
+
+    function updateStar() {
+      const btn = document.getElementById("star-btn");
+      const on = currentDest && isSaved(currentDest.name);
+      btn.classList.toggle("on", !!on);
+      btn.title = on ? "Remove from saved" : "Save destination";
+    }
+
     // ---- Pick a destination: route to it, then find disruptions on the way ----
     async function pickDestination(lon, lat, nameEnc) {
       const name = unescape(nameEnc);
       document.getElementById("search-input").value = name;
       closeSuggestions();
+
+      currentDest = { name, lon, lat };
+      updateStar();
 
       map.getSource("dest").setData(pt(lon, lat));
 
