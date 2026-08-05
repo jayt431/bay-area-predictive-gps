@@ -13,7 +13,7 @@
     :root {
       --bg: #0A0A0B; --ink: #E8E8E8; --muted: #888; --line: #2a2a2e;
       --panel: rgba(16,16,20,0.72); --accent: #00E5C7;
-      --red: #FF3B30; --yellow: #FFB020;
+      --red: #FF3B30; --yellow: #FFB020; --green: #3DD68C;
       --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
       --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -120,6 +120,22 @@
     .alert-reason { font-size: 12px; color: var(--muted); line-height: 1.45; }
     .alert-empty { padding: 20px 12px; color: var(--muted); font-size: 13px; text-align: center; }
 
+    /* ---- Parking panel (bottom-right) ---- */
+    #parking-panel { position: absolute; z-index: 3; right: 20px; bottom: 20px; width: 300px; padding: 8px; display: none; }
+    #parking-panel.open { display: block; }
+    .pp-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
+    .pk-item { display: flex; gap: 12px; padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .pk-item:last-child { border-bottom: none; }
+    .pk-badge { flex-shrink: 0; align-self: flex-start; font-size: 10px; font-weight: 700; font-family: var(--mono);
+      letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 8px; border-radius: 6px; }
+    .pk-badge.easy     { background: rgba(61,214,140,0.15); color: var(--green); }
+    .pk-badge.moderate { background: rgba(255,176,32,0.15); color: var(--yellow); }
+    .pk-badge.hard     { background: rgba(255,59,48,0.15);  color: var(--red); }
+    .pk-name { font-size: 14px; color: var(--ink); margin-bottom: 3px; }
+    .pk-caution { font-size: 11px; color: var(--red); font-family: var(--mono); }
+    .pk-sub { font-size: 12px; color: var(--muted); }
+    .pk-meta { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 4px; }
+
     .mapboxgl-popup-content { background: #16161a; color: var(--ink); border: 1px solid #333; border-radius: 8px; font-size: 13px; padding: 10px 12px; font-family: var(--mono); }
     .mapboxgl-popup-content strong { color: #fff; }
     .mapboxgl-popup-tip { border-top-color: #16161a !important; }
@@ -167,6 +183,12 @@
       <span class="mono-label" id="alert-count"></span>
     </div>
     <div id="alert-list"></div>
+  </div>
+
+  <!-- Parking panel -->
+  <div id="parking-panel" class="glass">
+    <div class="pp-head"><span class="mono-label">Parking near destination</span></div>
+    <div id="parking-list"></div>
   </div>
 
   <!-- Search panel -->
@@ -236,6 +258,7 @@
       });
 
       const SEVERITY_COLOR = ["match", ["get", "severity"], "red", "#FF3B30", "yellow", "#FFB020", "#888"];
+      const AVAIL_COLOR = ["match", ["get", "availability"], "easy", "#3DD68C", "moderate", "#FFB020", "hard", "#FF3B30", "#888"];
       const zoomRadius = (s, b) => ["interpolate", ["linear"], ["zoom"], 10, s, 15, b];
 
       map.on("load", () => {
@@ -244,6 +267,14 @@
         map.addSource("me",     { type: "geojson", data: pt(home.lon, home.lat) });
         map.addSource("dest",   { type: "geojson", data: emptyFC() });
         map.addSource("alerts", { type: "geojson", data: emptyFC() });
+        map.addSource("pzones",   { type: "geojson", data: emptyFC() });
+        map.addSource("pcaution", { type: "geojson", data: emptyFC() });
+
+        // Parking zones (drawn first, so they sit beneath route + pins)
+        map.addLayer({ id: "parking-fill", type: "fill", source: "pzones",
+          paint: { "fill-color": AVAIL_COLOR, "fill-opacity": 0.18 } });
+        map.addLayer({ id: "parking-outline", type: "line", source: "pzones",
+          paint: { "line-color": AVAIL_COLOR, "line-width": 1.5, "line-opacity": 0.6 } });
 
         // Route line: soft glow under a solid cyan line
         map.addLayer({ id: "route-glow", type: "line", source: "route",
@@ -278,6 +309,18 @@
                     "text-size": ["interpolate", ["linear"], ["zoom"], 10, 11, 15, 15], "text-offset": [0, 1.4],
                     "text-anchor": "top", "text-allow-overlap": false },
           paint: { "text-color": "#E8E8E8", "text-halo-color": "#0A0A0B", "text-halo-width": 1.5 } });
+
+        // Break-in caution markers (on top): red dot with a "!"
+        map.addLayer({ id: "pcaution-core", type: "circle", source: "pcaution",
+          paint: { "circle-color": "#FF3B30", "circle-radius": zoomRadius(7, 11),
+                   "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
+        map.addLayer({ id: "pcaution-mark", type: "symbol", source: "pcaution",
+          layout: { "text-field": "!", "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Regular"], "text-size": 14 },
+          paint: { "text-color": "#fff" } });
+        map.on("click", "pcaution-core", (e) => {
+          new mapboxgl.Popup({ offset: 12 }).setLngLat(e.features[0].geometry.coordinates)
+            .setHTML(`<strong>Break-in risk</strong><br>Elevated vehicle break-ins reported near here.`).addTo(map);
+        });
 
         map.on("click", "alert-core", (e) => {
           const p = e.features[0].properties;
@@ -440,6 +483,44 @@
       updateSummary(name, route, onRoute);
       updateBell(onRoute);
       renderAlertList(onRoute);
+      loadParking(lon, lat);
+    }
+
+    // ---- Parking (auto-shown near the destination) ----
+    async function loadParking(lon, lat) {
+      const data = await (await fetch(`/api/parking?lat=${lat}&lon=${lon}`)).json();
+      const zones = data.zones || [];
+
+      // Shaded availability zones (soft circles via Turf)
+      const zoneFeatures = zones.map(z => {
+        const poly = turf.circle([z.lon, z.lat], 0.16, { steps: 48, units: "kilometers" });
+        poly.properties = { availability: z.availability, name: z.name };
+        return poly;
+      });
+      map.getSource("pzones").setData({ type: "FeatureCollection", features: zoneFeatures });
+
+      // Caution markers where break-in risk is elevated
+      const cautions = zones.filter(z => z.risk === "elevated").map(z => ({
+        type: "Feature", geometry: pt(z.lon, z.lat), properties: { name: z.name },
+      }));
+      map.getSource("pcaution").setData({ type: "FeatureCollection", features: cautions });
+
+      renderParkingPanel(zones);
+    }
+
+    function availLabel(a) { return a === "easy" ? "Open" : a === "moderate" ? "Tight" : "Full"; }
+
+    function renderParkingPanel(zones) {
+      document.getElementById("parking-panel").classList.add("open");
+      document.getElementById("parking-list").innerHTML = zones.map(z => `
+        <div class="pk-item">
+          <div class="pk-badge ${z.availability}">${availLabel(z.availability)}</div>
+          <div class="pk-body">
+            <div class="pk-name">${z.name}${z.risk === "elevated" ? ' <span class="pk-caution">⚠ break-in risk</span>' : ''}</div>
+            <div class="pk-sub">${z.note}</div>
+            <div class="pk-meta">Cleaning: ${z.cleaning}</div>
+          </div>
+        </div>`).join("");
     }
 
     function updateSummary(name, route, onRoute) {

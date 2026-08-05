@@ -18,7 +18,9 @@ news calls return real, relevant data.
 
 from __future__ import annotations
 
+import math
 import os
+import random
 from datetime import datetime, timedelta
 
 import requests
@@ -245,6 +247,62 @@ _DISRUPTIONS = [
 def get_disruptions() -> list[dict]:
     """Return the Bay Area pool of possible disruptions (mocked for now)."""
     return [dict(d) for d in _DISRUPTIONS]
+
+
+# ---------------------------------------------------------------------------
+# PARKING (mocked, phase 1)
+#
+# Generates a few parking zones around whatever destination the user routed
+# to. Deterministic: the same destination always yields the same zones, so
+# the demo is stable. Phase 2 replaces this with real SF open data (street
+# sweeping schedules, garage occupancy, SFPD break-in incidents).
+# ---------------------------------------------------------------------------
+
+_CLEANING_TIMES = ["Tue 8-10 AM", "Wed 12-2 PM", "Thu 9-11 AM", "Mon 2-4 PM", "None posted this week"]
+_DIR_LABELS = {"N": "North", "E": "East", "S": "South", "W": "West"}
+_DIR_ANGLES = [("N", 0), ("E", 90), ("S", 180), ("W", 270)]
+
+
+def _avail_note(avail: str, ptype: str) -> str:
+    if ptype == "garage":
+        return {"easy": "Garage, plenty of space", "moderate": "Garage, filling up",
+                "hard": "Garage, nearly full"}[avail]
+    return {"easy": "Street spots usually open", "moderate": "Street parking is tight",
+            "hard": "Street parking usually full"}[avail]
+
+
+def get_parking(lat: float, lon: float) -> list[dict]:
+    """Return mocked parking zones around a destination point.
+
+    Availability drives the zone color; risk == 'elevated' flags a possible
+    break-in hotspot the frontend marks with a caution icon.
+    """
+    seed = int(round(lat, 3) * 1000) * 100000 + int(round(lon, 3) * 1000)
+    rng = random.Random(seed)
+    dirs = _DIR_ANGLES[:]
+    rng.shuffle(dirs)
+
+    zones = []
+    for i, (dname, ang) in enumerate(dirs):
+        dist_m = rng.uniform(180, 360)
+        dlat = (dist_m * math.cos(math.radians(ang))) / 111111.0
+        dlon = (dist_m * math.sin(math.radians(ang))) / (111111.0 * math.cos(math.radians(lat)))
+        avail = rng.choices(["easy", "moderate", "hard"], weights=[3, 4, 3])[0]
+        risk = rng.choices(["low", "elevated"], weights=[4, 2])[0]
+        ptype = "garage" if (i == 0 and rng.random() < 0.4) else "street"
+        cleaning = "N/A (garage)" if ptype == "garage" else rng.choice(_CLEANING_TIMES)
+        zones.append({
+            "id": f"pz{i}",
+            "name": f"{_DIR_LABELS[dname]} of destination",
+            "lat": round(lat + dlat, 6),
+            "lon": round(lon + dlon, 6),
+            "type": ptype,
+            "availability": avail,
+            "risk": risk,
+            "cleaning": cleaning,
+            "note": _avail_note(avail, ptype),
+        })
+    return zones
 
 
 # ---------------------------------------------------------------------------

@@ -91,6 +91,17 @@ def disruptions():
     return jsonify({"disruptions": mock_data.get_disruptions()})
 
 
+@app.route("/api/parking")
+def parking():
+    """Mocked parking zones around a destination (lat/lon query params)."""
+    try:
+        lat = float(request.args.get("lat", ""))
+        lon = float(request.args.get("lon", ""))
+    except ValueError:
+        return jsonify({"error": "numeric lat and lon query params are required"}), 400
+    return jsonify({"zones": mock_data.get_parking(lat, lon)})
+
+
 @app.route("/map-test")
 def map_test():
     """Throwaway page to verify the Mapbox token and dark style render."""
