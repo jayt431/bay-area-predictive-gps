@@ -271,6 +271,65 @@ def _avail_note(avail: str, ptype: str) -> str:
             "hard": "Street parking usually full"}[avail]
 
 
+_METERS_URL = "https://data.sfgov.org/resource/8vzz-qzz9.json"
+
+
+def _predict_avail(name: str, count: int) -> str:
+    """Stable predicted availability (placeholder — real curb availability
+    isn't published). Deterministic per street so the demo stays stable."""
+    r = (sum(ord(c) for c in name) * 7 + count) % 10
+    return "easy" if r < 3 else "moderate" if r < 7 else "hard"
+
+
+def _predict_risk(name: str) -> str:
+    return "elevated" if sum(ord(c) for c in name) % 3 == 0 else "low"
+
+
+def get_metered_streets(lat: float, lon: float, radius: int = 350, max_streets: int = 6) -> dict:
+    """Real metered street parking near a point, from SF's DataSF open data.
+
+    Locations are real (every SFMTA meter); availability is predicted, since no
+    live curb-availability feed exists. Meters are grouped by street.
+    """
+    params = {
+        "$where": f"within_circle(shape,{lat},{lon},{radius}) AND on_offstreet_type='ON'",
+        "$select": "street_name,latitude,longitude",
+        "$limit": 800,
+    }
+    try:
+        resp = requests.get(_METERS_URL, params=params, timeout=15)
+        resp.raise_for_status()
+        rows = resp.json()
+    except Exception as exc:
+        return {"error": f"meter fetch failed: {exc}", "streets": []}
+
+    groups: dict[str, list[tuple[float, float]]] = {}
+    for r in rows:
+        try:
+            la, lo = float(r["latitude"]), float(r["longitude"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        groups.setdefault(r.get("street_name") or "Unknown", []).append((lo, la))
+
+    streets = []
+    for name, pts in groups.items():
+        clon = sum(p[0] for p in pts) / len(pts)
+        clat = sum(p[1] for p in pts) / len(pts)
+        avail = _predict_avail(name, len(pts))
+        streets.append({
+            "street": name.title(),
+            "count": len(pts),
+            "lat": round(clat, 6),
+            "lon": round(clon, 6),
+            "availability": avail,
+            "risk": _predict_risk(name),
+            "note": "Metered — paid street parking",
+            "meters": [[round(lo, 6), round(la, 6)] for lo, la in pts[:40]],
+        })
+    streets.sort(key=lambda s: s["count"], reverse=True)
+    return {"streets": streets[:max_streets]}
+
+
 def get_parking(lat: float, lon: float) -> list[dict]:
     """Return mocked parking zones around a destination point.
 

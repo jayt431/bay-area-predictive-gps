@@ -102,6 +102,17 @@ def parking():
     return jsonify({"zones": mock_data.get_parking(lat, lon)})
 
 
+@app.route("/api/meters")
+def meters():
+    """Real metered street parking near a point (SF DataSF), grouped by street."""
+    try:
+        lat = float(request.args.get("lat", ""))
+        lon = float(request.args.get("lon", ""))
+    except ValueError:
+        return jsonify({"error": "numeric lat and lon query params are required"}), 400
+    return jsonify(mock_data.get_metered_streets(lat, lon))
+
+
 @app.route("/map-test")
 def map_test():
     """Throwaway page to verify the Mapbox token and dark style render."""

@@ -13,7 +13,7 @@
     :root {
       --bg: #0A0A0B; --ink: #E8E8E8; --muted: #888; --line: #2a2a2e;
       --panel: rgba(16,16,20,0.72); --accent: #00E5C7;
-      --red: #FF3B30; --yellow: #FFB020; --green: #3DD68C;
+      --red: #FF3B30; --yellow: #FFB020; --green: #3DD68C; --meter: #A78BFA; --garage: #4F8EF7;
       --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
       --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -134,6 +134,8 @@
     .pk-badge.easy     { background: rgba(61,214,140,0.15); color: var(--green); }
     .pk-badge.moderate { background: rgba(255,176,32,0.15); color: var(--yellow); }
     .pk-badge.hard     { background: rgba(255,59,48,0.15);  color: var(--red); }
+    .pk-badge.metered  { background: rgba(167,139,250,0.15); color: var(--meter); }
+    .pk-badge.garage   { background: rgba(79,142,247,0.15);  color: var(--garage); }
     .pk-name { font-size: 14px; color: var(--ink); margin-bottom: 3px; }
     .pk-caution { font-size: 11px; color: var(--red); font-family: var(--mono); }
     .pk-sub { font-size: 12px; color: var(--muted); }
@@ -276,17 +278,23 @@
         map.addSource("pstreets",   { type: "geojson", data: emptyFC() });
         map.addSource("pbuildings", { type: "geojson", data: emptyFC() });
         map.addSource("pcaution",   { type: "geojson", data: emptyFC() });
+        map.addSource("pmeters",    { type: "geojson", data: emptyFC() });
 
         // Parking (drawn first, beneath route + pins)
         // Garage: outlined building footprint, colored by availability
         map.addLayer({ id: "pbuild-fill", type: "fill", source: "pbuildings",
-          paint: { "fill-color": AVAIL_COLOR, "fill-opacity": 0.30 } });
+          paint: { "fill-color": "#4F8EF7", "fill-opacity": 0.30 } });
         map.addLayer({ id: "pbuild-outline", type: "line", source: "pbuildings",
-          paint: { "line-color": AVAIL_COLOR, "line-width": 3.5, "line-opacity": 1 } });
+          paint: { "line-color": "#4F8EF7", "line-width": 3.5, "line-opacity": 1 } });
         // Street parking: colored line offset to the curb, colored by availability
         map.addLayer({ id: "pstreet-line", type: "line", source: "pstreets",
           layout: { "line-cap": "round" },
-          paint: { "line-color": AVAIL_COLOR, "line-width": 7, "line-offset": 4, "line-opacity": 1 } });
+          paint: { "line-color": "#A78BFA", "line-width": 7, "line-offset": 4, "line-opacity": 1 } });
+        // Real SF parking-meter locations as small dots (one "metered" color)
+        map.addLayer({ id: "pmeter-dot", type: "circle", source: "pmeters",
+          paint: { "circle-color": "#A78BFA",
+                   "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 1.5, 16, 3.5],
+                   "circle-opacity": 0.9 } });
 
         // Route line: soft glow under a solid cyan line
         map.addLayer({ id: "route-glow", type: "line", source: "route",
@@ -506,19 +514,23 @@
     let lastRouteBounds = null;
 
     async function loadParking(lon, lat) {
-      const data = await (await fetch(`/api/parking?lat=${lat}&lon=${lon}`)).json();
-      currentZones = data.zones || [];
+      const data = await (await fetch(`/api/meters?lat=${lat}&lon=${lon}`)).json();
+      currentZones = (data.streets || []).map(s => ({
+        name: s.street, lat: s.lat, lon: s.lon, availability: s.availability,
+        risk: s.risk, note: s.note, type: "street", count: s.count, meters: s.meters || [],
+      }));
       currentDestPt = [lon, lat];
 
-      // Clear any geometry from the previous destination + reset the toggle
+      // Clear geometry from the previous destination + reset the toggle
       map.getSource("pstreets").setData(emptyFC());
       map.getSource("pbuildings").setData(emptyFC());
       map.getSource("pcaution").setData(emptyFC());
+      map.getSource("pmeters").setData(emptyFC());
       parkingShown = false;
       const btn = document.getElementById("pk-show");
       if (btn) btn.textContent = "Show on map ▸";
 
-      renderParkingPanel(currentZones.filter(z => z.type !== "garage"));
+      renderParkingPanel(currentZones);
     }
 
     function toggleParkingView() {
@@ -557,32 +569,34 @@
     }
 
     function drawParkingGeometry() {
-      const streets = [], buildings = [], cautions = [];
-      const streetZones = currentZones.filter(z => z.type !== "garage");
+      const streets = [], buildings = [], cautions = [], meterDots = [];
+      const streetZones = currentZones;  // all real metered streets now
 
-      // Street parking: mocked zones snapped to the nearest real road
       streetZones.forEach(z => {
+        // curbside line: snap the street's meter-centroid to the nearest real road
         const p = map.project([z.lon, z.lat]);
-        const box = [[p.x - 70, p.y - 70], [p.x + 70, p.y + 70]];
+        const box = [[p.x - 90, p.y - 90], [p.x + 90, p.y + 90]];
         const road = nearestFeature(box, "road", [z.lon, z.lat], "line");
         if (road) { road.properties = { availability: z.availability }; streets.push(road); }
+        // real meter locations as dots
+        (z.meters || []).forEach(m => meterDots.push({
+          type: "Feature", geometry: { type: "Point", coordinates: m },
+          properties: { availability: z.availability },
+        }));
         if (z.risk === "elevated") cautions.push({ type: "Feature", geometry: pt(z.lon, z.lat), properties: {} });
       });
 
-      // Garages: REAL parking POIs from the map, with their building outlined
+      // Garages: real parking POIs from the map, building outlined
       const garages = findRealGarages();
-      garages.forEach(g => {
-        if (g.building) { g.building.properties = { availability: g.availability }; buildings.push(g.building); }
-      });
+      garages.forEach(g => { if (g.building) { g.building.properties = {}; buildings.push(g.building); } });
 
       map.getSource("pstreets").setData({ type: "FeatureCollection", features: streets });
+      map.getSource("pmeters").setData({ type: "FeatureCollection", features: meterDots });
       map.getSource("pbuildings").setData({ type: "FeatureCollection", features: buildings });
       map.getSource("pcaution").setData({ type: "FeatureCollection", features: cautions });
 
-      // Panel = street zones + the real garages we discovered
       renderParkingPanel([...streetZones, ...garages.map(g => ({
-        name: g.name, availability: g.availability, type: "garage",
-        note: g.note, cleaning: "N/A (garage)", risk: "low",
+        name: g.name, type: "garage", note: g.note, risk: "low",
       }))]);
     }
 
@@ -614,19 +628,10 @@
         if (seen.has(key)) return; seen.add(key);
         const p = map.project(c);
         const bld = nearestFeature([[p.x - 45, p.y - 45], [p.x + 45, p.y + 45]], "building", c, "polygon");
-        const avail = mockAvail(c[0], c[1]);
         out.push({ name: f.properties.name || "Parking garage", lon: c[0], lat: c[1],
-                   availability: avail, note: garageNote(avail), building: bld });
+                   note: "Parking garage", building: bld });
       });
       return out;
-    }
-
-    function mockAvail(lon, lat) {
-      const s = Math.abs(Math.sin(lon * 97.13 + lat * 131.7)) % 1;
-      return s < 0.4 ? "easy" : s < 0.72 ? "moderate" : "hard";
-    }
-    function garageNote(a) {
-      return a === "easy" ? "Garage, plenty of space" : a === "moderate" ? "Garage, filling up" : "Garage, nearly full";
     }
 
     // Nearest rendered road line / building polygon to a point (real Mapbox geometry)
@@ -665,15 +670,25 @@
 
     function renderParkingPanel(zones) {
       document.getElementById("parking-panel").classList.add("open");
-      document.getElementById("parking-list").innerHTML = zones.map(z => `
+      const list = document.getElementById("parking-list");
+      if (!zones.length) {
+        list.innerHTML = '<div class="alert-empty">No metered parking data near here.</div>';
+        return;
+      }
+      list.innerHTML = zones.map(z => {
+        const badge = z.type === "garage"
+          ? `<div class="pk-badge garage">Garage</div>`
+          : `<div class="pk-badge metered">Metered</div>`;
+        return `
         <div class="pk-item">
-          <div class="pk-badge ${z.availability}">${availLabel(z.availability)}</div>
+          ${badge}
           <div class="pk-body">
             <div class="pk-name">${z.name}${z.risk === "elevated" ? ' <span class="pk-caution">⚠ break-in risk</span>' : ''}</div>
             <div class="pk-sub">${z.note}</div>
-            <div class="pk-meta">Cleaning: ${z.cleaning}</div>
+            <div class="pk-meta">${z.type === "garage" ? "Garage" : (z.count ? z.count + " metered spaces" : "Street parking")}</div>
           </div>
-        </div>`).join("");
+        </div>`;
+      }).join("");
     }
 
     function updateSummary(name, route, onRoute) {
