@@ -123,7 +123,10 @@
     /* ---- Parking panel (bottom-right) ---- */
     #parking-panel { position: absolute; z-index: 3; right: 20px; bottom: 20px; width: 300px; padding: 8px; display: none; }
     #parking-panel.open { display: block; }
-    .pp-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
+    .pp-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
+    .pp-btn { background: none; border: 1px solid var(--line); color: var(--accent); font-family: var(--mono);
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+    .pp-btn:hover { border-color: var(--accent); }
     .pk-item { display: flex; gap: 12px; padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
     .pk-item:last-child { border-bottom: none; }
     .pk-badge { flex-shrink: 0; align-self: flex-start; font-size: 10px; font-weight: 700; font-family: var(--mono);
@@ -187,8 +190,12 @@
 
   <!-- Parking panel -->
   <div id="parking-panel" class="glass">
-    <div class="pp-head"><span class="mono-label">Parking near destination</span></div>
+    <div class="pp-head">
+      <span class="mono-label">Parking near destination</span>
+      <button class="pp-btn" id="pk-show" onclick="toggleParkingView()">Show on map ▸</button>
+    </div>
     <div id="parking-list"></div>
+    <div id="pk-debug" class="mono-label" style="padding: 8px 12px; color: var(--accent);"></div>
   </div>
 
   <!-- Search panel -->
@@ -267,14 +274,20 @@
         map.addSource("me",     { type: "geojson", data: pt(home.lon, home.lat) });
         map.addSource("dest",   { type: "geojson", data: emptyFC() });
         map.addSource("alerts", { type: "geojson", data: emptyFC() });
-        map.addSource("pzones",   { type: "geojson", data: emptyFC() });
-        map.addSource("pcaution", { type: "geojson", data: emptyFC() });
+        map.addSource("pstreets",   { type: "geojson", data: emptyFC() });
+        map.addSource("pbuildings", { type: "geojson", data: emptyFC() });
+        map.addSource("pcaution",   { type: "geojson", data: emptyFC() });
 
-        // Parking zones (drawn first, so they sit beneath route + pins)
-        map.addLayer({ id: "parking-fill", type: "fill", source: "pzones",
-          paint: { "fill-color": AVAIL_COLOR, "fill-opacity": 0.18 } });
-        map.addLayer({ id: "parking-outline", type: "line", source: "pzones",
-          paint: { "line-color": AVAIL_COLOR, "line-width": 1.5, "line-opacity": 0.6 } });
+        // Parking (drawn first, beneath route + pins)
+        // Garage: outlined building footprint, colored by availability
+        map.addLayer({ id: "pbuild-fill", type: "fill", source: "pbuildings",
+          paint: { "fill-color": AVAIL_COLOR, "fill-opacity": 0.30 } });
+        map.addLayer({ id: "pbuild-outline", type: "line", source: "pbuildings",
+          paint: { "line-color": AVAIL_COLOR, "line-width": 3.5, "line-opacity": 1 } });
+        // Street parking: colored line offset to the curb, colored by availability
+        map.addLayer({ id: "pstreet-line", type: "line", source: "pstreets",
+          layout: { "line-cap": "round" },
+          paint: { "line-color": AVAIL_COLOR, "line-width": 7, "line-offset": 4, "line-opacity": 1 } });
 
         // Route line: soft glow under a solid cyan line
         map.addLayer({ id: "route-glow", type: "line", source: "route",
@@ -455,6 +468,7 @@
       // Fit the map to the whole route
       const coords = line.coordinates;
       const b = coords.reduce((bb, c) => bb.extend(c), new mapboxgl.LngLatBounds(coords[0], coords[0]));
+      lastRouteBounds = b;
       map.fitBounds(b, { padding: { top: 120, bottom: 160, left: 380, right: 360 }, duration: 900 });
 
       // Which disruptions fall near this route line?
@@ -486,26 +500,127 @@
       loadParking(lon, lat);
     }
 
-    // ---- Parking (auto-shown near the destination) ----
+    // ---- Parking (panel auto-shows; geometry renders on "Show on map") ----
+    let currentZones = [];
+    let currentDestPt = null;
+    let parkingShown = false;
+    let lastRouteBounds = null;
+
     async function loadParking(lon, lat) {
       const data = await (await fetch(`/api/parking?lat=${lat}&lon=${lon}`)).json();
-      const zones = data.zones || [];
+      currentZones = data.zones || [];
+      currentDestPt = [lon, lat];
 
-      // Shaded availability zones (soft circles via Turf)
-      const zoneFeatures = zones.map(z => {
-        const poly = turf.circle([z.lon, z.lat], 0.16, { steps: 48, units: "kilometers" });
-        poly.properties = { availability: z.availability, name: z.name };
-        return poly;
+      // Clear any geometry from the previous destination + reset the toggle
+      map.getSource("pstreets").setData(emptyFC());
+      map.getSource("pbuildings").setData(emptyFC());
+      map.getSource("pcaution").setData(emptyFC());
+      parkingShown = false;
+      const btn = document.getElementById("pk-show");
+      if (btn) btn.textContent = "Show on map ▸";
+
+      renderParkingPanel(currentZones);
+    }
+
+    function toggleParkingView() {
+      const btn = document.getElementById("pk-show");
+      if (!parkingShown) {
+        showParkingGeometry();
+        btn.textContent = "‹ Back to route";
+        parkingShown = true;
+      } else {
+        fitRoute();
+        map.getSource("pstreets").setData(emptyFC());
+        map.getSource("pbuildings").setData(emptyFC());
+        map.getSource("pcaution").setData(emptyFC());
+        btn.textContent = "Show on map ▸";
+        parkingShown = false;
+      }
+    }
+
+    function fitRoute() {
+      if (lastRouteBounds) map.fitBounds(lastRouteBounds,
+        { padding: { top: 120, bottom: 160, left: 380, right: 360 }, duration: 700 });
+    }
+
+    // Zoom to the destination, then draw real curbside lines + garage outlines.
+    // Street/building geometry only exists at street-level zoom, so fly in first.
+    function showParkingGeometry() {
+      if (!currentDestPt || !currentZones.length) return;
+      const dbg = document.getElementById("pk-debug");
+      if (dbg) dbg.textContent = "zooming in…";
+      // Frame the destination AND all parking zones so every zone is on-screen
+      // (queryRenderedFeatures only sees what's in view). Cap zoom so streets
+      // and buildings still render.
+      const pts = [currentDestPt, ...currentZones.map(z => [z.lon, z.lat])];
+      const b = pts.reduce((bb, c) => bb.extend(c), new mapboxgl.LngLatBounds(pts[0], pts[0]));
+      map.fitBounds(b, { padding: 140, maxZoom: 16.5, duration: 800 });
+      map.once("idle", drawParkingGeometry);
+      setTimeout(drawParkingGeometry, 1800); // backup if idle already fired
+    }
+
+    function drawParkingGeometry() {
+      const streets = [], buildings = [], cautions = [];
+      let dbgRoad = 0, dbgBld = 0, dbgTotal = 0;
+      const layerNames = new Set();
+      currentZones.forEach(z => {
+        const p = map.project([z.lon, z.lat]);
+        const box = [[p.x - 70, p.y - 70], [p.x + 70, p.y + 70]];
+        let all = [];
+        try { all = map.queryRenderedFeatures(box); } catch {}
+        dbgTotal += all.length;
+        all.forEach(f => { if (f.sourceLayer) layerNames.add(f.sourceLayer); });
+        dbgRoad += all.filter(f => f.sourceLayer === "road").length;
+        dbgBld  += all.filter(f => f.sourceLayer === "building").length;
+        if (z.type === "garage") {
+          const bld = nearestFeature(box, "building", [z.lon, z.lat], "polygon");
+          if (bld) { bld.properties = { availability: z.availability }; buildings.push(bld); }
+        } else {
+          const road = nearestFeature(box, "road", [z.lon, z.lat], "line");
+          if (road) { road.properties = { availability: z.availability }; streets.push(road); }
+        }
+        if (z.risk === "elevated") cautions.push({ type: "Feature", geometry: pt(z.lon, z.lat), properties: {} });
       });
-      map.getSource("pzones").setData({ type: "FeatureCollection", features: zoneFeatures });
-
-      // Caution markers where break-in risk is elevated
-      const cautions = zones.filter(z => z.risk === "elevated").map(z => ({
-        type: "Feature", geometry: pt(z.lon, z.lat), properties: { name: z.name },
-      }));
+      map.getSource("pstreets").setData({ type: "FeatureCollection", features: streets });
+      map.getSource("pbuildings").setData({ type: "FeatureCollection", features: buildings });
       map.getSource("pcaution").setData({ type: "FeatureCollection", features: cautions });
+      const nStreet = currentZones.filter(z => z.type !== "garage").length;
+      const nGarage = currentZones.filter(z => z.type === "garage").length;
+      const dbg = document.getElementById("pk-debug");
+      if (dbg) dbg.textContent =
+        `z${map.getZoom().toFixed(1)} · zones ${nStreet}St/${nGarage}Gar · road:${dbgRoad} bld:${dbgBld} · drew ${streets.length}L ${buildings.length}B`;
+    }
 
-      renderParkingPanel(zones);
+    // Nearest rendered road line / building polygon to a point (real Mapbox geometry)
+    function nearestFeature(box, sourceLayer, near, kind) {
+      let feats;
+      try { feats = map.queryRenderedFeatures(box); } catch { return null; }
+      feats = feats.filter(f => f.sourceLayer === sourceLayer);
+      const target = turf.point(near);
+
+      if (kind === "polygon") {
+        const polys = feats.filter(f => f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon");
+        for (const f of polys) {
+          try { if (turf.booleanPointInPolygon(target, f)) return { type: "Feature", geometry: f.geometry, properties: {} }; } catch {}
+        }
+        let best = null, bestD = Infinity;
+        polys.forEach(f => {
+          try { const d = turf.distance(target, turf.centroid(f)); if (d < bestD) { bestD = d; best = { type: "Feature", geometry: f.geometry, properties: {} }; } } catch {}
+        });
+        return best;
+      }
+
+      let best = null, bestD = Infinity;
+      feats.filter(f => f.geometry.type === "LineString" || f.geometry.type === "MultiLineString").forEach(f => {
+        try {
+          turf.flatten(f).features.forEach(seg => {
+            if (seg.geometry.type !== "LineString") return;
+            const d = turf.pointToLineDistance(target, seg, { units: "kilometers" });
+            if (d < bestD) { bestD = d; best = { type: "Feature", geometry: seg.geometry, properties: {} }; }
+          });
+        } catch {}
+      });
+      return best;
     }
 
     function availLabel(a) { return a === "easy" ? "Open" : a === "moderate" ? "Tight" : "Full"; }
