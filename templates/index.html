@@ -195,7 +195,6 @@
       <button class="pp-btn" id="pk-show" onclick="toggleParkingView()">Show on map ▸</button>
     </div>
     <div id="parking-list"></div>
-    <div id="pk-debug" class="mono-label" style="padding: 8px 12px; color: var(--accent);"></div>
   </div>
 
   <!-- Search panel -->
@@ -519,7 +518,7 @@
       const btn = document.getElementById("pk-show");
       if (btn) btn.textContent = "Show on map ▸";
 
-      renderParkingPanel(currentZones);
+      renderParkingPanel(currentZones.filter(z => z.type !== "garage"));
     }
 
     function toggleParkingView() {
@@ -547,8 +546,6 @@
     // Street/building geometry only exists at street-level zoom, so fly in first.
     function showParkingGeometry() {
       if (!currentDestPt || !currentZones.length) return;
-      const dbg = document.getElementById("pk-debug");
-      if (dbg) dbg.textContent = "zooming in…";
       // Frame the destination AND all parking zones so every zone is on-screen
       // (queryRenderedFeatures only sees what's in view). Cap zoom so streets
       // and buildings still render.
@@ -561,34 +558,75 @@
 
     function drawParkingGeometry() {
       const streets = [], buildings = [], cautions = [];
-      let dbgRoad = 0, dbgBld = 0, dbgTotal = 0;
-      const layerNames = new Set();
-      currentZones.forEach(z => {
+      const streetZones = currentZones.filter(z => z.type !== "garage");
+
+      // Street parking: mocked zones snapped to the nearest real road
+      streetZones.forEach(z => {
         const p = map.project([z.lon, z.lat]);
         const box = [[p.x - 70, p.y - 70], [p.x + 70, p.y + 70]];
-        let all = [];
-        try { all = map.queryRenderedFeatures(box); } catch {}
-        dbgTotal += all.length;
-        all.forEach(f => { if (f.sourceLayer) layerNames.add(f.sourceLayer); });
-        dbgRoad += all.filter(f => f.sourceLayer === "road").length;
-        dbgBld  += all.filter(f => f.sourceLayer === "building").length;
-        if (z.type === "garage") {
-          const bld = nearestFeature(box, "building", [z.lon, z.lat], "polygon");
-          if (bld) { bld.properties = { availability: z.availability }; buildings.push(bld); }
-        } else {
-          const road = nearestFeature(box, "road", [z.lon, z.lat], "line");
-          if (road) { road.properties = { availability: z.availability }; streets.push(road); }
-        }
+        const road = nearestFeature(box, "road", [z.lon, z.lat], "line");
+        if (road) { road.properties = { availability: z.availability }; streets.push(road); }
         if (z.risk === "elevated") cautions.push({ type: "Feature", geometry: pt(z.lon, z.lat), properties: {} });
       });
+
+      // Garages: REAL parking POIs from the map, with their building outlined
+      const garages = findRealGarages();
+      garages.forEach(g => {
+        if (g.building) { g.building.properties = { availability: g.availability }; buildings.push(g.building); }
+      });
+
       map.getSource("pstreets").setData({ type: "FeatureCollection", features: streets });
       map.getSource("pbuildings").setData({ type: "FeatureCollection", features: buildings });
       map.getSource("pcaution").setData({ type: "FeatureCollection", features: cautions });
-      const nStreet = currentZones.filter(z => z.type !== "garage").length;
-      const nGarage = currentZones.filter(z => z.type === "garage").length;
-      const dbg = document.getElementById("pk-debug");
-      if (dbg) dbg.textContent =
-        `z${map.getZoom().toFixed(1)} · zones ${nStreet}St/${nGarage}Gar · road:${dbgRoad} bld:${dbgBld} · drew ${streets.length}L ${buildings.length}B`;
+
+      // Panel = street zones + the real garages we discovered
+      renderParkingPanel([...streetZones, ...garages.map(g => ({
+        name: g.name, availability: g.availability, type: "garage",
+        note: g.note, cleaning: "N/A (garage)", risk: "low",
+      }))]);
+    }
+
+    function vectorSourceId() {
+      const s = map.getStyle().sources;
+      for (const id in s) { if (s[id].type === "vector" && String(s[id].url || "").includes("mapbox")) return id; }
+      return "composite";
+    }
+
+    // Find real parking garages from the map's tile data (rendered or not)
+    function findRealGarages() {
+      let pl = [];
+      try { pl = map.querySourceFeatures(vectorSourceId(), { sourceLayer: "poi_label" }); } catch {}
+      const dest = turf.point(currentDestPt);
+      const near = pl.filter(f => f.geometry.type === "Point" &&
+        turf.distance(dest, turf.point(f.geometry.coordinates), { units: "kilometers" }) < 0.5);
+
+      const parking = near.filter(f => {
+        const c = String(f.properties.class || "").toLowerCase();
+        const mk = String(f.properties.maki || "").toLowerCase();
+        const ty = String(f.properties.type || "").toLowerCase();
+        return mk === "parking" || c.includes("parking") || ty.includes("parking");
+      });
+
+      const seen = new Set(), out = [];
+      parking.forEach(f => {
+        const c = f.geometry.coordinates;
+        const key = (f.properties.name || "") + c[0].toFixed(4) + c[1].toFixed(4);
+        if (seen.has(key)) return; seen.add(key);
+        const p = map.project(c);
+        const bld = nearestFeature([[p.x - 45, p.y - 45], [p.x + 45, p.y + 45]], "building", c, "polygon");
+        const avail = mockAvail(c[0], c[1]);
+        out.push({ name: f.properties.name || "Parking garage", lon: c[0], lat: c[1],
+                   availability: avail, note: garageNote(avail), building: bld });
+      });
+      return out;
+    }
+
+    function mockAvail(lon, lat) {
+      const s = Math.abs(Math.sin(lon * 97.13 + lat * 131.7)) % 1;
+      return s < 0.4 ? "easy" : s < 0.72 ? "moderate" : "hard";
+    }
+    function garageNote(a) {
+      return a === "easy" ? "Garage, plenty of space" : a === "moderate" ? "Garage, filling up" : "Garage, nearly full";
     }
 
     // Nearest rendered road line / building polygon to a point (real Mapbox geometry)

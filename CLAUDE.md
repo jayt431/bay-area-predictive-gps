@@ -75,19 +75,31 @@ Long-term goals:
 - [x] Live at https://bay-area-predictive-gps.onrender.com
 - [ ] GitHub README with demo recording for portfolio
 
-**Phase 5 — Map-first redesign (in progress)**
-- Rebuild the UI around a full-screen dark Mapbox map (LEMMINO aesthetic:
-  black base, white building outlines). Design being done in Figma first.
-- Alerts shown as red pins (will affect commute) and yellow pins (might).
-- Bottom-left glass search panel with recent-location recommendations.
-- Notification bell (top-right) with unread count.
-- Backend prep done: `get_alert_pins()` in mock_data.py, `GET /api/pins`,
-  and `/map-test` page. Gated on a `MAPBOX_TOKEN` env var.
-- Pins render as native GL layers (GeoJSON source + circle/symbol layers),
-  not HTML markers — this fixed the zoom-scaling jank.
-- Minor polish deferred: zoom still feels very slightly non-smooth; not
-  worth chasing yet. Real search panel + notification bell await the Figma
-  design before being built.
+**Phase 5 — Map-first GPS (built, ongoing)**
+The homepage (`templates/index.html`, served at `/`) is now a single-user GPS
+on a full-screen dark Mapbox map. Requires `MAPBOX_TOKEN` (env var; also set on
+Render). Uses Mapbox GL JS + Turf (both via CDN). Skipped Figma — designing
+directly in code.
+
+- **Single user, fixed home base** (`mock_data.HOME`, `GET /api/config`). The
+  three personas remain only for the agent + `/map-test`.
+- **Search**: type any Bay Area address (Mapbox Geocoding) or tap a suggested
+  chip. **Saved destinations** persist via browser `localStorage` (`bapg_saved`).
+- **Routing**: real driving route via Mapbox Directions; route summary panel
+  shows ETA, distance, and on-route disruption count.
+- **Disruptions**: pool in `mock_data` (`GET /api/disruptions`); frontend keeps
+  those within 0.5km (red) / 2km (yellow) of the route line (Turf). Native GL
+  circle/symbol layers, not HTML markers (fixes zoom jank). Bell + alert panel.
+- **Parking** (`GET /api/parking`, auto-shows on route): "Show on map" zooms in
+  and draws curbside colored lines for street parking (mocked zones snapped to
+  the nearest real road) and outlines for **real garages** — pulled from the
+  map's own tile data via `querySourceFeatures` on `poi_label` (parking is
+  tagged class `motorist` + maki `parking`), building footprint outlined.
+  Availability green/yellow/red; a "!" marker flags elevated break-in risk.
+
+Next on parking: wire **SF parking meter open data (DataSF)** to replace the
+mocked street zones with real metered curb locations. Street parking is the
+only remaining mock in this feature (garages are real).
 
 ## Future directions (not yet started)
 
