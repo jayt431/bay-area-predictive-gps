@@ -141,6 +141,45 @@
     .pk-sub { font-size: 12px; color: var(--muted); }
     .pk-meta { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 4px; }
 
+    /* ---- Trip mode (committed route) ---- */
+    .rs-start { margin-top: 14px; width: 100%; padding: 10px; border: none; border-radius: 10px;
+      background: var(--accent); color: #05221e; font-size: 14px; font-weight: 700; cursor: pointer; font-family: var(--sans); }
+    .rs-start:hover { filter: brightness(1.08); }
+    body.trip-mode #search-panel,
+    body.trip-mode #route-summary,
+    body.trip-mode #parking-panel,
+    body.trip-mode #alert-panel,
+    body.trip-mode #bell { display: none !important; }
+    #trip-panel { position: absolute; z-index: 4; top: 20px; left: 20px; bottom: 20px; width: 360px;
+      display: none; flex-direction: column; overflow: hidden; }
+    body.trip-mode #trip-panel { display: flex; }
+    .trip-bar { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+    #trip-eta { color: var(--accent); font-size: 18px; font-weight: 700; font-family: var(--mono); }
+    #trip-dist { color: var(--muted); font-family: var(--mono); font-size: 13px; }
+    .trip-next { padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink); }
+    #trip-body { overflow-y: auto; }
+    .trip-sec-title { padding: 14px 18px 6px; display: block; }
+    .step-item { display: flex; gap: 10px; justify-content: space-between; padding: 10px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px; color: var(--ink); }
+    .step-dist { color: var(--muted); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+
+    /* Navigation banner (step-through) */
+    .nav-banner { padding: 16px 18px; border-bottom: 1px solid var(--line); background: rgba(0,229,199,0.06); }
+    .nav-instruction { font-size: 18px; font-weight: 700; line-height: 1.3; color: var(--ink); }
+    .nav-sub { margin-top: 6px; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+    .nav-sub .warn { color: var(--yellow); } .nav-sub .danger { color: var(--red); }
+    .nav-controls { display: flex; gap: 10px; margin-top: 14px; }
+    .nav-btn { flex: 1; padding: 10px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
+      background: rgba(255,255,255,0.05); color: var(--ink); font-family: var(--sans); font-size: 14px; font-weight: 600; }
+    .nav-btn.primary { background: var(--accent); color: #05221e; border-color: var(--accent); }
+    .nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .nav-btn:not(:disabled):hover { border-color: var(--accent); }
+    .step-item.current { background: rgba(0,229,199,0.12); border-left: 3px solid var(--accent); }
+    .sim-tag { position: absolute; z-index: 4; bottom: 20px; left: 50%; transform: translateX(-50%);
+      font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--muted); background: var(--panel); border: 1px solid var(--line); padding: 6px 14px; border-radius: 20px; display: none; }
+    body.trip-mode .sim-tag { display: block; }
+
     .mapboxgl-popup-content { background: #16161a; color: var(--ink); border: 1px solid #333; border-radius: 8px; font-size: 13px; padding: 10px 12px; font-family: var(--mono); }
     .mapboxgl-popup-content strong { color: #fff; }
     .mapboxgl-popup-tip { border-top-color: #16161a !important; }
@@ -170,7 +209,26 @@
       <div class="rs-stat"><div class="num" id="rs-dist">—</div><div class="cap">Distance</div></div>
       <div class="rs-stat"><div class="num" id="rs-alerts">—</div><div class="cap">On route</div></div>
     </div>
+    <button id="start-btn" class="rs-start" onclick="startTrip()">▶ Start trip</button>
   </div>
+
+  <!-- Trip (active navigation) panel -->
+  <div id="trip-panel" class="glass">
+    <div class="trip-bar">
+      <div><span id="trip-eta"></span><span id="trip-dist"></span></div>
+      <button class="pp-btn" onclick="endTrip()">End trip</button>
+    </div>
+    <div class="nav-banner">
+      <div id="nav-instruction" class="nav-instruction"></div>
+      <div id="nav-sub" class="nav-sub"></div>
+      <div class="nav-controls">
+        <button id="nav-prev" class="nav-btn" onclick="stepBy(-1)">‹ Prev</button>
+        <button id="nav-next" class="nav-btn primary" onclick="stepBy(1)">Next ›</button>
+      </div>
+    </div>
+    <div id="trip-body"></div>
+  </div>
+  <div class="sim-tag">◉ Simulating drive</div>
 
   <!-- Notification bell -->
   <div id="bell" class="glass" onclick="toggleAlerts()">
@@ -319,6 +377,13 @@
         map.addLayer({ id: "dest-core", type: "circle", source: "dest",
           paint: { "circle-color": "#FFFFFF", "circle-radius": 7, "circle-stroke-width": 3, "circle-stroke-color": "#00E5C7" } });
 
+        // Current position during a simulated drive
+        map.addSource("nav", { type: "geojson", data: emptyFC() });
+        map.addLayer({ id: "nav-halo", type: "circle", source: "nav",
+          paint: { "circle-color": "#00E5C7", "circle-radius": 12, "circle-opacity": 0.25 } });
+        map.addLayer({ id: "nav-pos", type: "circle", source: "nav",
+          paint: { "circle-color": "#00E5C7", "circle-radius": 7, "circle-stroke-width": 2, "circle-stroke-color": "#05221e" } });
+
         // Disruption pins (glow, core, label) — sit on top
         map.addLayer({ id: "alert-glow", type: "circle", source: "alerts",
           paint: { "circle-color": SEVERITY_COLOR, "circle-radius": zoomRadius(10, 20), "circle-blur": 1, "circle-opacity": 0.5 } });
@@ -459,12 +524,13 @@
 
       currentDest = { name, lon, lat };
       updateStar();
+      document.body.classList.remove("trip-mode");  // picking a new place exits any active trip
 
       map.getSource("dest").setData(pt(lon, lat));
 
       // Real driving route from home -> destination
       const durl = `https://api.mapbox.com/directions/v5/mapbox/driving/`
-        + `${home.lon},${home.lat};${lon},${lat}?geometries=geojson&overview=full&access_token=${TOKEN}`;
+        + `${home.lon},${home.lat};${lon},${lat}?geometries=geojson&overview=full&steps=true&access_token=${TOKEN}`;
       const dir = await (await fetch(durl)).json();
       if (!dir.routes || !dir.routes.length) return;
       const route = dir.routes[0];
@@ -505,6 +571,8 @@
       updateBell(onRoute);
       renderAlertList(onRoute);
       loadParking(lon, lat);
+
+      tripRoute = route; tripDisruptions = onRoute; tripName = name;
     }
 
     // ---- Parking (panel auto-shows; geometry renders on "Show on map") ----
@@ -512,6 +580,7 @@
     let currentDestPt = null;
     let parkingShown = false;
     let lastRouteBounds = null;
+    let tripRoute = null, tripDisruptions = [], tripName = "";
 
     async function loadParking(lon, lat) {
       const data = await (await fetch(`/api/meters?lat=${lat}&lon=${lon}`)).json();
@@ -552,6 +621,100 @@
     function fitRoute() {
       if (lastRouteBounds) map.fitBounds(lastRouteBounds,
         { padding: { top: 120, bottom: 160, left: 380, right: 360 }, duration: 700 });
+    }
+
+    // ---- Committed trip view: step-through navigation ----
+    let tripSteps = [], stepIndex = 0;
+
+    function startTrip() {
+      if (!tripRoute) return;
+      document.body.classList.add("trip-mode");
+      tripSteps = (tripRoute.legs && tripRoute.legs[0] && tripRoute.legs[0].steps) || [];
+      stepIndex = 0;
+
+      const mins = Math.round(tripRoute.duration / 60);
+      const miles = (tripRoute.distance / 1609.34).toFixed(1);
+      document.getElementById("trip-eta").textContent = `▶ ${mins} min`;
+      document.getElementById("trip-dist").textContent = ` · ${miles} mi`;
+
+      renderTripBody();
+      gotoStep(0);
+    }
+
+    function endTrip() {
+      document.body.classList.remove("trip-mode");
+      map.getSource("nav").setData(emptyFC());
+      map.easeTo({ pitch: 0, bearing: 0, duration: 600 });
+      fitRoute();
+    }
+
+    function stepBy(d) { gotoStep(stepIndex + d); }
+
+    // Fly a tight, tilted camera to a maneuver, facing the direction of travel
+    function gotoStep(i) {
+      if (i < 0 || i >= tripSteps.length) return;
+      stepIndex = i;
+      const step = tripSteps[i];
+      const loc = step.maneuver.location;                 // [lon, lat]
+      const bearing = step.maneuver.bearing_after ?? 0;   // heading after the turn
+
+      map.easeTo({ center: loc, zoom: 16.5, pitch: 60, bearing, duration: 900 });
+      map.getSource("nav").setData(pt(loc[0], loc[1]));
+
+      // Banner: this instruction + distance to the next maneuver
+      document.getElementById("nav-instruction").textContent = step.maneuver.instruction;
+      const next = tripSteps[i + 1];
+      let sub = next ? `Then in ${fmtDist(step.distance)}: ${next.maneuver.instruction}` :
+                       "Arriving at your destination";
+      const near = disruptionNearStep(loc);
+      if (near) sub += ` · <span class="${near.severity === 'red' ? 'danger' : 'warn'}">⚠ ${near.name} ahead</span>`;
+      document.getElementById("nav-sub").innerHTML = sub;
+
+      document.getElementById("nav-prev").disabled = i === 0;
+      document.getElementById("nav-next").disabled = i === tripSteps.length - 1;
+
+      // Highlight + scroll to the current step in the list
+      document.querySelectorAll(".step-item[data-step]").forEach(el =>
+        el.classList.toggle("current", +el.dataset.step === i));
+      const cur = document.querySelector(`.step-item[data-step="${i}"]`);
+      if (cur) cur.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+
+    // Nearest on-route disruption to a step location, if close (<600m)
+    function disruptionNearStep(loc) {
+      let best = null, bestD = 0.6;
+      tripDisruptions.forEach(d => {
+        const km = turf.distance(turf.point(loc), turf.point([d.lon, d.lat]), { units: "kilometers" });
+        if (km < bestD) { bestD = km; best = d; }
+      });
+      return best;
+    }
+
+    function renderTripBody() {
+      let html = "";
+      if (tripDisruptions.length) {
+        html += `<span class="mono-label trip-sec-title">Heads up on the way</span>`;
+        html += tripDisruptions.map(d => `
+          <div class="alert-item"><div class="alert-dot ${d.severity}"></div>
+          <div><div class="alert-name">${d.name}</div><div class="alert-reason">${d.reason}</div></div></div>`).join("");
+      }
+      html += `<span class="mono-label trip-sec-title">Directions</span>`;
+      html += tripSteps.map((s, i) => `
+        <div class="step-item" data-step="${i}" onclick="gotoStep(${i})" style="cursor:pointer">
+          <div>${s.maneuver.instruction}</div><div class="step-dist">${fmtDist(s.distance)}</div></div>`).join("");
+
+      const streets = currentZones.filter(z => z.type !== "garage");
+      html += `<span class="mono-label trip-sec-title">Parking at destination</span>`;
+      html += streets.length
+        ? streets.map(z => `<div class="step-item"><div><span class="pk-badge metered">Metered</span> ${z.name}</div>
+          <div class="step-dist">${z.count} spaces</div></div>`).join("")
+        : `<div class="alert-empty">No metered parking data near here.</div>`;
+
+      document.getElementById("trip-body").innerHTML = html;
+    }
+
+    function fmtDist(m) {
+      return m < 300 ? `${Math.round(m / 0.3048 / 10) * 10} ft` : `${(m / 1609.34).toFixed(1)} mi`;
     }
 
     // Zoom to the destination, then draw real curbside lines + garage outlines.
