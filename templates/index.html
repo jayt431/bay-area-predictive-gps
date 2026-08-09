@@ -179,6 +179,10 @@
       font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
       color: var(--muted); background: var(--panel); border: 1px solid var(--line); padding: 6px 14px; border-radius: 20px; display: none; }
     body.trip-mode .sim-tag { display: block; }
+    #recenter-btn { position: absolute; z-index: 5; right: 20px; bottom: 60px; display: none;
+      align-items: center; gap: 8px; padding: 10px 16px; border-radius: 22px; cursor: pointer;
+      background: var(--accent); color: #05221e; border: none; font-family: var(--sans); font-size: 14px; font-weight: 700; }
+    #recenter-btn svg { width: 16px; height: 16px; }
 
     .mapboxgl-popup-content { background: #16161a; color: var(--ink); border: 1px solid #333; border-radius: 8px; font-size: 13px; padding: 10px 12px; font-family: var(--mono); }
     .mapboxgl-popup-content strong { color: #fff; }
@@ -223,12 +227,20 @@
       <div id="nav-sub" class="nav-sub"></div>
       <div class="nav-controls">
         <button id="nav-prev" class="nav-btn" onclick="stepBy(-1)">‹ Prev</button>
-        <button id="nav-next" class="nav-btn primary" onclick="stepBy(1)">Next ›</button>
+        <button id="nav-next" class="nav-btn" onclick="stepBy(1)">Next ›</button>
+      </div>
+      <div class="nav-controls">
+        <button id="nav-drive" class="nav-btn primary" onclick="toggleDrive()">▶ Drive</button>
+        <button id="nav-speed" class="nav-btn" onclick="cycleSpeed()" style="flex:0 0 70px">3×</button>
       </div>
     </div>
     <div id="trip-body"></div>
   </div>
   <div class="sim-tag">◉ Simulating drive</div>
+  <button id="recenter-btn" onclick="recenter()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path>
+    </svg>Re-center</button>
 
   <!-- Notification bell -->
   <div id="bell" class="glass" onclick="toggleAlerts()">
@@ -420,6 +432,16 @@
       });
 
       wireSearch();
+
+      // Release the camera the instant the user touches the map during a trip,
+      // so a single press grabs it (no fighting the per-frame camera update).
+      const releaseOnTouch = () => {
+        if (document.body.classList.contains("trip-mode")) setFollowing(false);
+      };
+      const canvas = map.getCanvas();
+      canvas.addEventListener("mousedown", releaseOnTouch);
+      canvas.addEventListener("touchstart", releaseOnTouch, { passive: true });
+      canvas.addEventListener("wheel", releaseOnTouch, { passive: true });
     }
 
     // ---- Search: geocode as you type, pick a suggestion ----
@@ -590,14 +612,20 @@
       }));
       currentDestPt = [lon, lat];
 
-      // Clear geometry from the previous destination + reset the toggle
+      // Clear the previous destination's curb lines / garages / caution
       map.getSource("pstreets").setData(emptyFC());
       map.getSource("pbuildings").setData(emptyFC());
       map.getSource("pcaution").setData(emptyFC());
-      map.getSource("pmeters").setData(emptyFC());
       parkingShown = false;
       const btn = document.getElementById("pk-show");
       if (btn) btn.textContent = "Show on map ▸";
+
+      // Meter dots are data-driven, so show them on the map right away — they
+      // reveal where parking is as you drive toward the destination.
+      const meterDots = [];
+      currentZones.forEach(z => (z.meters || []).forEach(m =>
+        meterDots.push({ type: "Feature", geometry: { type: "Point", coordinates: m }, properties: {} })));
+      map.getSource("pmeters").setData({ type: "FeatureCollection", features: meterDots });
 
       renderParkingPanel(currentZones);
     }
@@ -638,46 +666,153 @@
       document.getElementById("trip-dist").textContent = ` · ${miles} mi`;
 
       renderTripBody();
+      prepDrive();
+      progressKm = 0;
       gotoStep(0);
     }
 
     function endTrip() {
+      stopDrive();
+      setFollowing(true);
       document.body.classList.remove("trip-mode");
       map.getSource("nav").setData(emptyFC());
       map.easeTo({ pitch: 0, bearing: 0, duration: 600 });
       fitRoute();
     }
 
-    function stepBy(d) { gotoStep(stepIndex + d); }
+    function stepBy(d) { stopDrive(); gotoStep(stepIndex + d); }
 
-    // Fly a tight, tilted camera to a maneuver, facing the direction of travel
-    function gotoStep(i) {
-      if (i < 0 || i >= tripSteps.length) return;
+    // Update just the instruction banner + list highlight for step i (no camera)
+    function updateStepBanner(i) {
       stepIndex = i;
       const step = tripSteps[i];
-      const loc = step.maneuver.location;                 // [lon, lat]
-      const bearing = step.maneuver.bearing_after ?? 0;   // heading after the turn
-
-      map.easeTo({ center: loc, zoom: 16.5, pitch: 60, bearing, duration: 900 });
-      map.getSource("nav").setData(pt(loc[0], loc[1]));
-
-      // Banner: this instruction + distance to the next maneuver
       document.getElementById("nav-instruction").textContent = step.maneuver.instruction;
       const next = tripSteps[i + 1];
       let sub = next ? `Then in ${fmtDist(step.distance)}: ${next.maneuver.instruction}` :
                        "Arriving at your destination";
-      const near = disruptionNearStep(loc);
+      const near = disruptionNearStep(step.maneuver.location);
       if (near) sub += ` · <span class="${near.severity === 'red' ? 'danger' : 'warn'}">⚠ ${near.name} ahead</span>`;
       document.getElementById("nav-sub").innerHTML = sub;
 
       document.getElementById("nav-prev").disabled = i === 0;
       document.getElementById("nav-next").disabled = i === tripSteps.length - 1;
 
-      // Highlight + scroll to the current step in the list
       document.querySelectorAll(".step-item[data-step]").forEach(el =>
         el.classList.toggle("current", +el.dataset.step === i));
       const cur = document.querySelector(`.step-item[data-step="${i}"]`);
       if (cur) cur.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+
+    // Step mode: fly the camera to a maneuver, facing the direction of travel
+    function gotoStep(i) {
+      if (i < 0 || i >= tripSteps.length) return;
+      const step = tripSteps[i];
+      const loc = step.maneuver.location;
+      curPos = loc; curBearing = step.maneuver.bearing_after ?? 0;
+      setFollowing(true);   // a deliberate step re-centers the camera
+      map.easeTo({ center: loc, zoom: 16.5, pitch: 60, bearing: curBearing, duration: 900 });
+      map.getSource("nav").setData(pt(loc[0], loc[1]));
+      updateStepBanner(i);
+    }
+
+    // ---- Auto-drive: continuous fly-through along the route geometry ----
+    let driving = false, driveRAF = null, progressKm = 0, routeLineKm = 0, lastTs = 0;
+    let stepCumKm = [];      // distance from start to each maneuver
+    let smoothedBearing = null;  // eased camera heading, to avoid jitter
+    let speedMult = 3;       // 1× / 2× / 3×
+    let following = true;    // does the camera track the position?
+    let recentering = false; // playing the smooth snap-back animation
+    let curPos = null, curBearing = 0;  // latest position/heading, for re-center
+
+    function setFollowing(v) {
+      following = v;
+      const btn = document.getElementById("recenter-btn");
+      if (btn) btn.style.display = v ? "none" : "flex";
+    }
+
+    function recenter() {
+      setFollowing(true);
+      if (!curPos) return;
+      // Let the eased animation play without the per-frame jumpTo cutting it off
+      recentering = true;
+      const dur = 900;
+      map.easeTo({ center: curPos, zoom: 16.5, pitch: 60, bearing: curBearing, duration: dur, easing: t => t * (2 - t) });
+      setTimeout(() => { recentering = false; }, dur);
+    }
+    const DRIVE_BASE_SEC = 60;  // a full route plays in ~60s at 1× (compressed sim, not real time)
+
+    function prepDrive() {
+      const coords = tripRoute.geometry.coordinates;
+      routeLineKm = turf.length(turf.lineString(coords), { units: "kilometers" });
+      // cumulative distance from start to each step's maneuver
+      stepCumKm = [];
+      let acc = 0;
+      tripSteps.forEach((s, i) => { stepCumKm[i] = acc; acc += s.distance / 1000; });
+    }
+
+    function toggleDrive() { driving ? stopDrive() : startDrive(); }
+
+    function startDrive() {
+      if (!tripSteps.length) return;
+      driving = true;
+      document.getElementById("nav-drive").textContent = "⏸ Pause";
+      document.getElementById("nav-drive").classList.remove("primary");
+      if (progressKm >= routeLineKm) progressKm = 0;  // restart if at the end
+      lastTs = 0; smoothedBearing = null;
+      driveRAF = requestAnimationFrame(driveFrame);
+    }
+
+    function stopDrive() {
+      driving = false;
+      if (driveRAF) cancelAnimationFrame(driveRAF);
+      const btn = document.getElementById("nav-drive");
+      if (btn) { btn.textContent = "▶ Drive"; btn.classList.add("primary"); }
+    }
+
+    function driveFrame(ts) {
+      if (!driving) return;
+      if (!lastTs) lastTs = ts;
+      const dt = (ts - lastTs) / 1000; lastTs = ts;
+
+      progressKm += (routeLineKm / DRIVE_BASE_SEC) * speedMult * dt;
+      if (progressKm >= routeLineKm) {
+        progressKm = routeLineKm; drawDriveAt(progressKm);
+        drawParkingGeometry();        // arrived: render curb lines + garages at destination
+        stopDrive(); return;
+      }
+      drawDriveAt(progressKm);
+      driveRAF = requestAnimationFrame(driveFrame);
+    }
+
+    const _driveLine = () => turf.lineString(tripRoute.geometry.coordinates);
+
+    function drawDriveAt(km) {
+      const line = _driveLine();
+      const here = turf.along(line, km, { units: "kilometers" }).geometry.coordinates;
+      // Longer look-ahead => steadier heading (less jitter)
+      const ahead = turf.along(line, Math.min(km + 0.06, routeLineKm), { units: "kilometers" }).geometry.coordinates;
+      const target = turf.bearing(turf.point(here), turf.point(ahead));
+
+      // Ease the camera heading toward the target via the shortest angle
+      if (smoothedBearing === null) smoothedBearing = target;
+      else {
+        const diff = ((target - smoothedBearing + 540) % 360) - 180;
+        smoothedBearing += diff * 0.12;
+      }
+
+      curPos = here; curBearing = smoothedBearing;
+      // Position dot always advances; the camera only follows if not panned away
+      map.getSource("nav").setData(pt(here[0], here[1]));
+      if (following && !recentering) map.jumpTo({ center: here, zoom: 16.5, pitch: 60, bearing: smoothedBearing });
+
+      let i = 0;
+      for (let k = 0; k < stepCumKm.length; k++) { if (stepCumKm[k] <= km + 0.0001) i = k; }
+      if (i !== stepIndex) updateStepBanner(i);
+    }
+
+    function cycleSpeed() {
+      speedMult = speedMult === 3 ? 1 : speedMult + 1;
+      document.getElementById("nav-speed").textContent = `${speedMult}×`;
     }
 
     // Nearest on-route disruption to a step location, if close (<600m)
