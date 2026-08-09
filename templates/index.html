@@ -94,6 +94,22 @@
     .rs-stat .num.warn { color: var(--yellow); }
     .rs-stat .num.danger { color: var(--red); }
 
+    /* AI trip brief */
+    #brief { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); display: none; }
+    #brief.open { display: block; }
+    .brief-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .brief-risk { font-size: 10px; font-weight: 700; font-family: var(--mono); letter-spacing: 0.08em;
+      text-transform: uppercase; padding: 3px 8px; border-radius: 6px; }
+    .brief-risk.none   { background: rgba(61,214,140,0.15); color: var(--green); }
+    .brief-risk.low    { background: rgba(255,176,32,0.15); color: var(--yellow); }
+    .brief-risk.medium { background: rgba(255,176,32,0.20); color: var(--yellow); }
+    .brief-risk.high   { background: rgba(255,59,48,0.15);  color: var(--red); }
+    .brief-src { font-size: 9px; font-family: var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .brief-headline { font-size: 14px; font-weight: 600; line-height: 1.35; margin-bottom: 6px; }
+    .brief-rec { font-size: 12px; color: var(--muted); line-height: 1.45; }
+    .brief-rec b { color: var(--accent); font-weight: 600; }
+    .brief-loading { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
     /* ---- Notification bell (top-right) ---- */
     #bell {
       position: absolute; z-index: 3; top: 20px; right: 20px;
@@ -212,6 +228,14 @@
       <div class="rs-stat"><div class="num" id="rs-eta">—</div><div class="cap">ETA</div></div>
       <div class="rs-stat"><div class="num" id="rs-dist">—</div><div class="cap">Distance</div></div>
       <div class="rs-stat"><div class="num" id="rs-alerts">—</div><div class="cap">On route</div></div>
+    </div>
+    <div id="brief">
+      <div class="brief-top">
+        <span id="brief-risk" class="brief-risk"></span>
+        <span id="brief-src" class="brief-src"></span>
+      </div>
+      <div id="brief-headline" class="brief-headline"></div>
+      <div id="brief-rec" class="brief-rec"></div>
     </div>
     <button id="start-btn" class="rs-start" onclick="startTrip()">▶ Start trip</button>
   </div>
@@ -592,9 +616,52 @@
       updateSummary(name, route, onRoute);
       updateBell(onRoute);
       renderAlertList(onRoute);
-      loadParking(lon, lat);
+      await loadParking(lon, lat);
 
       tripRoute = route; tripDisruptions = onRoute; tripName = name;
+      loadBrief(name, route, onRoute);
+    }
+
+    // ---- AI trip brief (planning view) ----
+    async function loadBrief(name, route, onRoute) {
+      const brief = document.getElementById("brief");
+      brief.classList.add("open");
+      document.getElementById("brief-risk").className = "brief-risk";
+      document.getElementById("brief-risk").textContent = "";
+      document.getElementById("brief-src").textContent = "";
+      document.getElementById("brief-headline").innerHTML = '<span class="brief-loading">Analyzing route…</span>';
+      document.getElementById("brief-rec").textContent = "";
+
+      const context = {
+        destination: name,
+        eta_min: Math.round(route.duration / 60),
+        distance_mi: +(route.distance / 1609.34).toFixed(1),
+        disruptions: onRoute.map(d => ({ name: d.name, severity: d.severity, reason: d.reason })),
+        parking: currentZones.filter(z => z.type !== "garage").map(z => ({ name: z.name, count: z.count })),
+      };
+      try {
+        const res = await fetch("/api/brief", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(context),
+        });
+        const data = await res.json();
+        renderBrief(data.alert, data.source);
+      } catch {
+        brief.classList.remove("open");
+      }
+    }
+
+    function renderBrief(a, source) {
+      if (!a) return;
+      const risk = (a.risk || "none").toLowerCase();
+      const rEl = document.getElementById("brief-risk");
+      rEl.className = "brief-risk " + risk;
+      rEl.textContent = "Risk: " + risk;
+      document.getElementById("brief-src").textContent = source === "ai" ? "◆ AI brief" : "◆ predicted";
+      document.getElementById("brief-headline").textContent = a.headline || "";
+      document.getElementById("brief-rec").innerHTML =
+        a.recommendation && a.recommendation !== "No action needed"
+          ? `<b>Do this:</b> ${a.recommendation}` : "No action needed.";
     }
 
     // ---- Parking (panel auto-shows; geometry renders on "Show on map") ----

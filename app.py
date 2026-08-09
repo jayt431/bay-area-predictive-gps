@@ -21,6 +21,7 @@ from flask import Flask, jsonify, render_template, request
 
 import mock_data
 import tools
+import agent
 from agent import RouteIntelligenceAgent, api_key_present
 
 app = Flask(__name__)
@@ -111,6 +112,50 @@ def meters():
     except ValueError:
         return jsonify({"error": "numeric lat and lon query params are required"}), 400
     return jsonify(mock_data.get_metered_streets(lat, lon))
+
+
+@app.route("/api/brief", methods=["POST"])
+def brief():
+    """Pre-trip alert for the current route. Uses Claude when ANTHROPIC_API_KEY
+    is set; otherwise returns a rule-based fallback so the UI always works."""
+    ctx = request.get_json(silent=True) or {}
+    if api_key_present():
+        try:
+            alert = _parse_alert(agent.trip_brief_text(ctx))
+            return jsonify({"source": "ai", "alert": alert})
+        except Exception as exc:
+            # Never break the UI on an API hiccup — fall back.
+            return jsonify({"source": "fallback", "note": str(exc), "alert": _fallback_brief(ctx)})
+    return jsonify({"source": "fallback", "alert": _fallback_brief(ctx)})
+
+
+def _fallback_brief(ctx: dict) -> dict:
+    """Deterministic brief from the assembled trip, no model call."""
+    disruptions = ctx.get("disruptions") or []
+    reds = [d for d in disruptions if d.get("severity") == "red"]
+    yellows = [d for d in disruptions if d.get("severity") == "yellow"]
+    dest = ctx.get("destination", "your destination")
+
+    if reds:
+        risk = "high"
+        headline = f"{reds[0]['name']} is likely to affect your trip to {dest}."
+        why = f"{len(reds)} disruption(s) sit on your route, including {reds[0]['name']}. " + reds[0].get("reason", "")
+        rec = "Consider leaving earlier or taking an alternate route."
+    elif yellows:
+        risk = "low"
+        headline = f"Minor possible friction on the way to {dest}."
+        why = f"{len(yellows)} item(s) are near your route but may not affect it, e.g. {yellows[0]['name']}."
+        rec = "No action needed, but keep an eye out near the flagged area."
+    else:
+        risk = "none"
+        headline = f"Clear run to {dest}."
+        why = "No disruptions were detected on your route."
+        rec = "No action needed."
+
+    parking = ctx.get("parking") or []
+    if parking:
+        why += f" Metered parking is available near the destination (e.g. {parking[0].get('name')})."
+    return {"risk": risk, "headline": headline, "why": why, "recommendation": rec, "raw": None}
 
 
 @app.route("/map-test")

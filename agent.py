@@ -115,3 +115,70 @@ class RouteIntelligenceAgent:
 
 def api_key_present() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+# ---------------------------------------------------------------------------
+# Trip brief: a single-call version for the live map UI.
+#
+# The frontend has already gathered the concrete trip (destination, ETA,
+# on-route disruptions, parking), so no tool loop is needed. Claude just
+# reasons over the assembled facts and returns one structured alert.
+# ---------------------------------------------------------------------------
+
+BRIEF_SYSTEM = """\
+You are a Predictive Route Intelligence Agent for a Bay Area commuter. You \
+are given a specific planned trip with its route, predicted disruptions, and \
+parking near the destination, all already gathered. Reason over these facts \
+and return one clear, honest pre-trip alert.
+
+Judgment rules:
+- Weigh only what plausibly affects THIS trip. A red disruption on the route \
+matters; a distant or timing-irrelevant one does not.
+- Say RISK: none when nothing meaningfully threatens the trip. Do not invent \
+a threat to seem useful.
+- Parking pressure at the destination is worth a mention when it looks tight, \
+but it is secondary to route disruptions.
+
+Return EXACTLY this structure, nothing else:
+
+RISK: <none | low | medium | high>
+HEADLINE: <one line, plain language>
+WHY: <2-3 sentences citing the specific data given>
+RECOMMENDATION: <one concrete action, or "No action needed" when RISK is none>
+"""
+
+
+def _format_trip_context(ctx: dict) -> str:
+    lines = [
+        f"Destination: {ctx.get('destination', 'unknown')}",
+        f"ETA: {ctx.get('eta_min', '?')} min, {ctx.get('distance_mi', '?')} mi from home.",
+        "",
+        "Predicted disruptions on the route:",
+    ]
+    disruptions = ctx.get("disruptions") or []
+    if disruptions:
+        for d in disruptions:
+            lines.append(f"  - [{d.get('severity', '?').upper()}] {d.get('name')}: {d.get('reason', '')}")
+    else:
+        lines.append("  - none detected on this route")
+    parking = ctx.get("parking") or []
+    lines.append("")
+    lines.append("Parking near destination:")
+    if parking:
+        for p in parking[:5]:
+            lines.append(f"  - {p.get('name')} ({p.get('count', '?')} metered spaces)")
+    else:
+        lines.append("  - no metered-parking data near the destination")
+    return "\n".join(lines)
+
+
+def trip_brief_text(context: dict, client: anthropic.Anthropic | None = None) -> str:
+    """One Claude call over an assembled trip. Requires ANTHROPIC_API_KEY."""
+    client = client or anthropic.Anthropic()
+    resp = client.messages.create(
+        model=MODEL,
+        max_tokens=600,
+        system=BRIEF_SYSTEM,
+        messages=[{"role": "user", "content": _format_trip_context(context)}],
+    )
+    return "".join(b.text for b in resp.content if b.type == "text").strip()

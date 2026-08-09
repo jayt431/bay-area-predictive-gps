@@ -7,16 +7,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 pip install -r requirements.txt
 
-python run_scenarios.py            # full agent run (requires ANTHROPIC_API_KEY)
-python run_scenarios.py --dry-run  # dumps raw tool output, no model call needed
+# Web app (the main product — map GPS UI). Keys are read from a local .env.
+source .env && python app.py          # dev server at http://127.0.0.1:5000
+# Production (Render) runs: gunicorn app:app   (see Procfile)
+
+# Standalone agent scenarios (the original CLI harness)
+python run_scenarios.py               # full agent run (requires ANTHROPIC_API_KEY)
+python run_scenarios.py --dry-run     # dumps raw tool output, no model call needed
 ```
 
-Required env vars:
-- `ANTHROPIC_API_KEY` — needed for the full run only
-- `OPENWEATHER_API_KEY` — live weather (free tier, new keys can take ~2 hours to activate)
+Local dev loads keys from a gitignored `.env` (`source .env && python app.py`).
+On Render, the same vars are set in the dashboard's Environment tab.
+
+Env vars:
+- `MAPBOX_TOKEN` — required for the map UI (public `pk.` token; URL-restricted to
+  the onrender.com domain on the live site)
+- `ANTHROPIC_API_KEY` — enables the real AI trip brief; without it the brief and
+  agent fall back gracefully
+- `OPENWEATHER_API_KEY` — live weather (free tier)
 - `NEWSAPI_KEY` — live Bay Area news (free developer tier)
 
-Missing keys degrade that source gracefully; the run never hard-fails.
+Every source degrades gracefully; a missing key downgrades one feature, never
+breaks the app. **After each meaningful change: commit + push** (backs up to
+GitHub and auto-deploys to Render).
+
+## The web app (primary product)
+
+`app.py` (Flask) serves the map GPS at `/` from `templates/index.html`, a single
+self-contained page using Mapbox GL JS + Turf (both CDN). See the Phase 5 notes
+below for the full UX. It is a **single-user** model (fixed home base), distinct
+from the three personas the CLI agent still uses.
+
+Endpoints:
+| Route | Purpose |
+|-------|---------|
+| `GET /` | The map GPS UI |
+| `GET /api/config` | Home base (`mock_data.HOME`) |
+| `GET /api/disruptions` | Bay Area disruption pool (mocked) |
+| `GET /api/parking?lat&lon` | Mocked parking zones (legacy; UI now uses meters) |
+| `GET /api/meters?lat&lon` | **Real** SF metered streets (DataSF), grouped by street |
+| `POST /api/brief` | Pre-trip alert. Claude when `ANTHROPIC_API_KEY` set, else rule-based `_fallback_brief` |
+| `GET /map-test` | Standalone Mapbox pin test (persona data) |
+
+**AI trip brief:** the frontend assembles the concrete trip (destination, ETA,
+on-route disruptions, parking) and POSTs it to `/api/brief`. With a key,
+`agent.trip_brief_text()` makes one Claude call (no tool loop — data is already
+gathered) and returns a `RISK/HEADLINE/WHY/RECOMMENDATION` alert; without a key,
+`_fallback_brief()` derives the same shape by rule. The UI tag reads "◆ AI brief"
+vs "◆ predicted" accordingly.
 
 ## Architecture
 
@@ -97,9 +135,25 @@ directly in code.
   tagged class `motorist` + maki `parking`), building footprint outlined.
   Availability green/yellow/red; a "!" marker flags elevated break-in risk.
 
-Next on parking: wire **SF parking meter open data (DataSF)** to replace the
-mocked street zones with real metered curb locations. Street parking is the
-only remaining mock in this feature (garages are real).
+Parking status: **garages real** (map POIs), **metered streets real** (DataSF,
+violet dots + panel), break-in caution still mocked. Meter dots auto-render on
+routing so parking is visible while driving; curb lines + garage outlines draw
+on arrival.
+
+- **Committed trip / navigation.** "▶ Start trip" enters a nav view over the
+  route. Two modes share one camera: **step-through** (Prev/Next or click a step
+  → eased fly to each maneuver, facing `bearing_after`) and **auto-drive**
+  ("▶ Drive") — a continuous fly-through along the route geometry (Turf `along`),
+  with eased bearing smoothing to kill jitter, a 1×/2×/3× speed toggle, and a
+  compressed ~60s-at-1× timeline (a simulation, labeled "Simulating drive" —
+  there is no real GPS on desktop; swap in device GPS for a real mobile build).
+- **Camera control.** A single press on the map canvas releases follow (so one
+  drag grabs it, not three), the position dot keeps advancing, a "Re-center"
+  button appears, and re-centering plays a guarded eased snap-back (the
+  per-frame `jumpTo` is suppressed via a `recentering` flag so it isn't cut off).
+
+Next ideas: LEMMINO custom map style (Mapbox Studio); real break-in data (SFPD
+incidents); wire live weather/news into the brief; eventual accounts + DB.
 
 ## Future directions (not yet started)
 
