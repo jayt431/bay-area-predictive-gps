@@ -175,6 +175,14 @@
     .pk-caution { font-size: 11px; color: var(--red); font-family: var(--mono); }
     .pk-sub { font-size: 12px; color: var(--muted); }
     .pk-meta { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 4px; }
+    .pk-sec { padding: 12px 12px 4px; display: flex; align-items: center; gap: 7px; }
+    .pk-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .pk-dot.metered { background: var(--meter); }
+    .pk-dot.garage  { background: var(--garage); }
+    .pk-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 12px 8px 28px; }
+    .pk-row .nm { font-size: 13px; color: var(--ink); }
+    .pk-row .ct { font-size: 11px; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+    .pk-row .warn { color: var(--red); font-size: 11px; font-family: var(--mono); }
 
     /* ---- Trip mode (committed route) ---- */
     .rs-start { margin-top: 14px; width: 100%; padding: 10px; border: none; border-radius: 10px;
@@ -460,11 +468,8 @@
           paint: { "circle-color": SEVERITY_COLOR, "circle-radius": zoomRadius(10, 20), "circle-blur": 1, "circle-opacity": 0.5 } });
         map.addLayer({ id: "alert-core", type: "circle", source: "alerts",
           paint: { "circle-color": SEVERITY_COLOR, "circle-radius": zoomRadius(5, 9), "circle-stroke-width": 2, "circle-stroke-color": "#0A0A0B" } });
-        map.addLayer({ id: "alert-label", type: "symbol", source: "alerts",
-          layout: { "text-field": ["get", "name"], "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Regular"],
-                    "text-size": ["interpolate", ["linear"], ["zoom"], 10, 11, 15, 15], "text-offset": [0, 1.4],
-                    "text-anchor": "top", "text-allow-overlap": false },
-          paint: { "text-color": "#E8E8E8", "text-halo-color": "#0A0A0B", "text-halo-width": 1.5 } });
+        // Pins carry no always-on text (kept the map uncluttered); the name
+        // appears on click (popup) and in the alert panel / trip list.
 
         // Break-in caution markers (on top): red dot with a "!"
         map.addLayer({ id: "pcaution-core", type: "circle", source: "pcaution",
@@ -627,7 +632,7 @@
 
       // Which disruptions fall near this route line?
       const turfLine = turf.lineString(coords);
-      const onRoute = [];
+      let onRoute = [];
       disruptions.forEach(d => {
         const km = turf.pointToLineDistance(turf.point([d.lon, d.lat]), turfLine, { units: "kilometers" });
         let severity = null;
@@ -638,9 +643,13 @@
           reason: `${d.note} (${d.time} · ${km.toFixed(1)} km from route)` });
       });
       // Real civic/mobility events (SF 311) that fall near this route
-      const civicOnRoute = await civicNearRoute(lon, lat, turfLine);
+      let civicOnRoute = await civicNearRoute(lon, lat, turfLine);
       onRoute.push(...civicOnRoute);
-      onRoute.sort((a, b) => a.km - b.km);
+      // Prioritize what matters: reds first, then closest. Cap so the map and
+      // alerts stay digestible instead of flooding with every minor report.
+      const sevRank = { red: 0, yellow: 1 };
+      onRoute.sort((a, b) => (sevRank[a.severity] - sevRank[b.severity]) || (a.km - b.km));
+      onRoute = onRoute.slice(0, 6);
 
       // Update pins
       map.getSource("alerts").setData({
@@ -1074,24 +1083,27 @@
     function renderParkingPanel(zones) {
       document.getElementById("parking-panel").classList.add("open");
       const list = document.getElementById("parking-list");
-      if (!zones.length) {
-        list.innerHTML = '<div class="alert-empty">No metered parking data near here.</div>';
+      const streets = zones.filter(z => z.type !== "garage").slice(0, 5);
+      const garages = zones.filter(z => z.type === "garage").slice(0, 4);
+      if (!streets.length && !garages.length) {
+        list.innerHTML = '<div class="alert-empty">No parking data near here.</div>';
         return;
       }
-      list.innerHTML = zones.map(z => {
-        const badge = z.type === "garage"
-          ? `<div class="pk-badge garage">Garage</div>`
-          : `<div class="pk-badge metered">Metered</div>`;
-        return `
-        <div class="pk-item">
-          ${badge}
-          <div class="pk-body">
-            <div class="pk-name">${z.name}${z.risk === "elevated" ? ' <span class="pk-caution">⚠ break-in risk</span>' : ''}</div>
-            <div class="pk-sub">${z.note}</div>
-            <div class="pk-meta">${z.type === "garage" ? "Garage" : (z.count ? z.count + " metered spaces" : "Street parking")}</div>
-          </div>
-        </div>`;
-      }).join("");
+      let html = "";
+      if (streets.length) {
+        html += `<div class="pk-sec"><span class="pk-dot metered"></span><span class="mono-label">Metered streets</span></div>`;
+        html += streets.map(z => `
+          <div class="pk-row">
+            <span class="nm">${z.name}${z.risk === "elevated" ? ' <span class="warn">⚠</span>' : ''}</span>
+            <span class="ct">${z.count || "—"} spaces</span>
+          </div>`).join("");
+      }
+      if (garages.length) {
+        html += `<div class="pk-sec"><span class="pk-dot garage"></span><span class="mono-label">Garages</span></div>`;
+        html += garages.map(z => `
+          <div class="pk-row"><span class="nm">${z.name}</span><span class="ct">garage</span></div>`).join("");
+      }
+      list.innerHTML = html;
     }
 
     function updateSummary(name, route, onRoute) {
