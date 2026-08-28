@@ -114,6 +114,19 @@ def meters():
     return jsonify(mock_data.get_metered_streets(lat, lon))
 
 
+@app.route("/api/civic")
+def civic():
+    """Live civic/mobility events near a point (SF 311). One source, two views:
+    the GPS on-route detection and the Area Feed both consume this."""
+    try:
+        lat = float(request.args.get("lat", ""))
+        lon = float(request.args.get("lon", ""))
+    except ValueError:
+        return jsonify({"error": "numeric lat and lon query params are required"}), 400
+    radius = request.args.get("radius", 1500, type=int)
+    return jsonify(mock_data.get_civic_events(lat, lon, radius=radius))
+
+
 @app.route("/api/brief", methods=["POST"])
 def brief():
     """Pre-trip alert for the current route. Uses Claude when ANTHROPIC_API_KEY

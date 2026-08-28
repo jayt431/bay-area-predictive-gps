@@ -250,6 +250,76 @@ def get_disruptions() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# CIVIC / MOBILITY EVENTS (LIVE, SF 311 open data)
+#
+# The single "what's happening" source, fed by SF's real 311 cases, filtered
+# to categories that affect how you move through an area. Two views consume
+# this: the GPS (events near your route) and the Area Feed (events near a
+# place). No database yet — fetched live, like weather/news/meters.
+# ---------------------------------------------------------------------------
+
+_SF311_URL = "https://data.sfgov.org/resource/vw6y-z8j6.json"
+
+# 311 service_name -> (friendly type, icon, base severity).
+# Deliberately narrow: only categories that actually block or obstruct the way.
+# The 311 firehose (streetlights, graffiti, tree work, etc.) is intentionally
+# excluded — it's noise, not something that affects a drive.
+_MOBILITY_CATEGORIES = {
+    "Blocked Street and Sidewalk": ("Road/sidewalk blocked", "🚧", "red"),
+}
+
+
+def get_civic_events(lat: float, lon: float, radius: int = 1500,
+                     days: int = 21, limit: int = 60) -> dict:
+    """Live civic/mobility events near a point, from SF 311 open data."""
+    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00")
+    names = "','".join(_MOBILITY_CATEGORIES.keys())
+    where = (f"within_circle(point,{lat},{lon},{radius}) "
+             f"AND requested_datetime > '{since}' "
+             f"AND status_description = 'Open' "  # active only — resolved reports aren't relevant
+             f"AND service_name in('{names}')")
+    params = {
+        "$where": where,
+        "$select": "service_name,service_subtype,status_description,requested_datetime,address,lat,long",
+        "$order": "requested_datetime DESC",
+        "$limit": limit,
+    }
+    try:
+        resp = requests.get(_SF311_URL, params=params, timeout=15)
+        resp.raise_for_status()
+        rows = resp.json()
+    except Exception as exc:
+        return {"error": f"311 fetch failed: {exc}", "events": []}
+
+    events = []
+    for r in rows:
+        try:
+            la, lo = float(r["lat"]), float(r["long"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        cat = r.get("service_name", "")
+        label, icon, base = _MOBILITY_CATEGORIES.get(cat, ("Civic report", "•", "yellow"))
+        status = (r.get("status_description") or "").strip()
+        # An open "Blocked way" is the most likely to actually affect a trip.
+        severity = "red" if (label == "Blocked way" and status.lower() == "open") else base
+        subtype = (r.get("service_subtype") or "").replace("_", " ").strip()
+        detail = subtype if subtype and subtype.lower() not in ("other", "", label.lower()) else ""
+        events.append({
+            "name": label,               # friendly, e.g. "Blocked way"
+            "detail": detail,            # cleaned subtype when meaningful
+            "category": label,
+            "icon": icon,
+            "severity": severity,
+            "status": status or "Unknown",
+            "time": (r.get("requested_datetime") or "")[:10],
+            "address": r.get("address") or "",
+            "lat": round(la, 6),
+            "lon": round(lo, 6),
+        })
+    return {"events": events}
+
+
+# ---------------------------------------------------------------------------
 # PARKING (mocked, phase 1)
 #
 # Generates a few parking zones around whatever destination the user routed

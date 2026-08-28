@@ -136,6 +136,25 @@
     .alert-reason { font-size: 12px; color: var(--muted); line-height: 1.45; }
     .alert-empty { padding: 20px 12px; color: var(--muted); font-size: 13px; text-align: center; }
 
+    /* ---- Area feed (View 2: what's happening nearby) ---- */
+    #nearby-btn { position: absolute; z-index: 3; top: 20px; right: 78px; height: 46px; padding: 0 16px;
+      border-radius: 23px; display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink);
+      font-family: var(--sans); font-size: 13px; font-weight: 600; }
+    #nearby-btn:hover { border-color: var(--accent); }
+    #feed-panel { position: absolute; z-index: 4; top: 76px; right: 20px; width: 340px; padding: 8px;
+      max-height: calc(100vh - 100px); overflow-y: auto; display: none; }
+    #feed-panel.open { display: block; }
+    .feed-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
+    .feed-place { font-size: 14px; font-weight: 600; color: var(--ink); margin-top: 3px; }
+    .feed-item { display: flex; gap: 11px; padding: 11px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .feed-item:last-child { border-bottom: none; }
+    .feed-icon { font-size: 17px; line-height: 1.2; flex-shrink: 0; }
+    .feed-name { font-size: 13px; color: var(--ink); }
+    .feed-name .sev { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 6px; vertical-align: middle; }
+    .feed-name .sev.red { background: var(--red); } .feed-name .sev.yellow { background: var(--yellow); }
+    .feed-meta { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+    .feed-addr { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
     /* ---- Parking panel (bottom-right) ---- */
     #parking-panel { position: absolute; z-index: 3; right: 20px; bottom: 20px; width: 300px; padding: 8px; display: none; }
     #parking-panel.open { display: block; }
@@ -265,6 +284,22 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path>
     </svg>Re-center</button>
+
+  <!-- Area feed toggle (View 2) -->
+  <div id="nearby-btn" class="glass" onclick="toggleFeed()">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle>
+    </svg>Nearby
+  </div>
+
+  <!-- Area feed panel -->
+  <div id="feed-panel" class="glass">
+    <div class="feed-head">
+      <span class="mono-label">Happening nearby</span>
+      <div class="feed-place" id="feed-place">—</div>
+    </div>
+    <div id="feed-list"></div>
+  </div>
 
   <!-- Notification bell -->
   <div id="bell" class="glass" onclick="toggleAlerts()">
@@ -602,6 +637,9 @@
         onRoute.push({ ...d, severity, km,
           reason: `${d.note} (${d.time} · ${km.toFixed(1)} km from route)` });
       });
+      // Real civic/mobility events (SF 311) that fall near this route
+      const civicOnRoute = await civicNearRoute(lon, lat, turfLine);
+      onRoute.push(...civicOnRoute);
       onRoute.sort((a, b) => a.km - b.km);
 
       // Update pins
@@ -1092,6 +1130,97 @@
     }
 
     function toggleAlerts() { document.getElementById("alert-panel").classList.toggle("open"); }
+
+    // ---- Civic/mobility events (SF 311) — the shared "what's happening" source ----
+    let lastCivic = [];  // cache of the most recent fetch, reused by the feed
+
+    async function fetchCivic(lon, lat, radius = 1500) {
+      try {
+        const res = await fetch(`/api/civic?lat=${lat}&lon=${lon}&radius=${radius}`);
+        const data = await res.json();
+        lastCivic = data.events || [];
+      } catch { lastCivic = []; }
+      return lastCivic;
+    }
+
+    // View 1: civic events that fall near the route line -> disruption shape
+    async function civicNearRoute(destLon, destLat, turfLine) {
+      const events = await fetchCivic(destLon, destLat, 1800);
+      const out = [];
+      events.forEach(e => {
+        const km = turf.pointToLineDistance(turf.point([e.lon, e.lat]), turfLine, { units: "kilometers" });
+        if (km > NEAR_YELLOW) return;
+        const severity = (e.severity === "red" && km <= NEAR_RED) ? "red" : "yellow";
+        out.push({
+          name: `${e.icon} ${e.name}`, lat: e.lat, lon: e.lon, severity, km,
+          reason: `${e.category}${e.detail ? " — " + e.detail : ""} · ${e.status} · reported ${e.time} (${km.toFixed(1)} km from route)`,
+        });
+      });
+      return out;
+    }
+
+    const EVENT_ICON = {
+      concert: "🎵", event: "🎫", protest: "📢", market: "🛒",
+      construction: "🚧", incident: "🚗", weather: "🌊",
+    };
+
+    // View 2: the Area Feed — major events + drive-affecting closures near a place
+    async function toggleFeed() {
+      const panel = document.getElementById("feed-panel");
+      const opening = !panel.classList.contains("open");
+      panel.classList.remove("open");
+      document.getElementById("alert-panel").classList.remove("open");
+      if (!opening) return;
+      panel.classList.add("open");
+
+      const focus = currentDestPt || [home.lon, home.lat];
+      const label = currentDest ? currentDest.name : home.label;
+      document.getElementById("feed-place").textContent = `Near ${label}`;
+      document.getElementById("feed-list").innerHTML = '<div class="alert-empty">Loading…</div>';
+
+      // Major events (mock pool) within ~3km of the focus point
+      const here = turf.point(focus);
+      const items = [];
+      disruptions.forEach(d => {
+        const km = turf.distance(here, turf.point([d.lon, d.lat]), { units: "kilometers" });
+        if (km > 3) return;
+        items.push({
+          icon: EVENT_ICON[d.type] || "•", title: d.name,
+          meta: `${d.time} · ${km.toFixed(1)} km away`, sub: d.note,
+          severity: ["incident", "construction", "weather"].includes(d.type) ? "red" : "yellow",
+          km,
+        });
+      });
+      // Real, active road/sidewalk closures (SF 311) near the focus — nearest few
+      const closures = await fetchCivic(focus[0], focus[1], 1500);
+      closures.map(c => ({ c, km: turf.distance(here, turf.point([c.lon, c.lat]), { units: "kilometers" }) }))
+        .sort((a, b) => a.km - b.km)
+        .slice(0, 6)
+        .forEach(({ c, km }) => items.push({
+          icon: c.icon, title: c.name, meta: `reported ${c.time} · ${km.toFixed(1)} km away`,
+          sub: c.address, severity: c.severity, km,
+        }));
+
+      items.sort((a, b) => a.km - b.km);
+      renderFeed(items);
+    }
+
+    function renderFeed(items) {
+      const el = document.getElementById("feed-list");
+      if (!items.length) {
+        el.innerHTML = '<div class="alert-empty">Nothing major happening nearby.</div>';
+        return;
+      }
+      el.innerHTML = items.map(e => `
+        <div class="feed-item">
+          <div class="feed-icon">${e.icon}</div>
+          <div>
+            <div class="feed-name">${e.title}<span class="sev ${e.severity}"></span></div>
+            <div class="feed-meta">${e.meta}</div>
+            ${e.sub ? `<div class="feed-addr">${e.sub}</div>` : ""}
+          </div>
+        </div>`).join("");
+    }
 
     function pt(lon, lat) { return { type: "Point", coordinates: [lon, lat] }; }
     function emptyFC() { return { type: "FeatureCollection", features: [] }; }
