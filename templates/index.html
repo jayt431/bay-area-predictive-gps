@@ -135,6 +135,14 @@
     .alert-name { font-size: 14px; color: var(--ink); margin-bottom: 3px; }
     .alert-reason { font-size: 12px; color: var(--muted); line-height: 1.45; }
     .alert-empty { padding: 20px 12px; color: var(--muted); font-size: 13px; text-align: center; }
+    .alert-more { padding: 11px 12px; font-size: 12px; font-family: var(--mono); letter-spacing: 0.04em;
+      color: var(--muted); cursor: pointer; border-top: 1px solid var(--line); display: flex;
+      align-items: center; justify-content: space-between; }
+    .alert-more:hover { color: var(--accent); }
+    .alert-more .chev { transition: transform 0.2s; }
+    #alert-panel.show-minor .alert-more .chev { transform: rotate(180deg); }
+    #alert-minor { display: none; }
+    #alert-panel.show-minor #alert-minor { display: block; }
 
     /* ---- Area feed (View 2: what's happening nearby) ---- */
     #nearby-btn { position: absolute; z-index: 3; top: 20px; right: 78px; height: 46px; padding: 0 16px;
@@ -407,6 +415,8 @@
       const zoomRadius = (s, b) => ["interpolate", ["linear"], ["zoom"], 10, s, 15, b];
 
       map.on("load", () => {
+        applyLemminoStyle();   // recolor the base map before adding our layers
+
         // Empty sources; filled as the user routes (init once, update in place)
         map.addSource("route",  { type: "geojson", data: emptyFC() });
         map.addSource("me",     { type: "geojson", data: pt(home.lon, home.lat) });
@@ -1012,6 +1022,55 @@
       }))]);
     }
 
+    // Recolor Mapbox's dark base into the LEMMINO look: near-black land,
+    // white building outlines, dark thin roads, minimal labels. Roads and
+    // buildings stay *rendered* (just restyled) — the parking/garage detection
+    // reads their geometry, so they must never be hidden. Only labels/POIs hide.
+    function applyLemminoStyle() {
+      const layers = (map.getStyle().layers) || [];
+      layers.forEach(l => {
+        const id = l.id;
+        try {
+          if (l.type === "symbol") {
+            // Keep road/street name labels (useful for nav) but dim them; hide the rest.
+            const keep = /road|street|highway|motorway|shield/i.test(id);
+            map.setLayoutProperty(id, "visibility", keep ? "visible" : "none");
+            if (keep) {
+              map.setPaintProperty(id, "text-color", "#5c5c66");
+              map.setPaintProperty(id, "text-halo-color", "#000000");
+              map.setPaintProperty(id, "text-halo-width", 1.2);
+            }
+          } else if (l.type === "background") {
+            map.setPaintProperty(id, "background-color", "#08080A");
+          } else if (l.type === "fill") {
+            if (/water/i.test(id)) map.setPaintProperty(id, "fill-color", "#0c1016");
+            else if (/building/i.test(id)) map.setPaintProperty(id, "fill-color", "#101014");
+            else map.setPaintProperty(id, "fill-color", "#0A0A0B");   // land / landuse
+          } else if (l.type === "fill-extrusion") {
+            map.setPaintProperty(id, "fill-extrusion-color", "#101014");
+          } else if (l.type === "line" && /road|street|bridge|tunnel|motorway/i.test(id)) {
+            map.setPaintProperty(id, "line-color", "#26262c");
+          }
+        } catch (e) { /* property not on this layer — ignore */ }
+      });
+
+      // The signature: thin white building outlines over the near-black base.
+      const src = vectorSourceId();
+      if (src && !map.getLayer("lemmino-building-outline")) {
+        try {
+          map.addLayer({
+            id: "lemmino-building-outline", type: "line",
+            source: src, "source-layer": "building",
+            paint: {
+              "line-color": "#c9c9d2",
+              "line-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.25, 16, 0.55],
+              "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.3, 17, 1.0],
+            },
+          });
+        } catch (e) { /* source-layer name differs — skip outlines */ }
+      }
+    }
+
     function vectorSourceId() {
       const s = map.getStyle().sources;
       for (const id in s) { if (s[id].type === "vector" && String(s[id].url || "").includes("mapbox")) return id; }
@@ -1130,15 +1189,37 @@
     function renderAlertList(onRoute) {
       document.getElementById("alert-count").textContent = onRoute.length ? `${onRoute.length}` : "";
       const el = document.getElementById("alert-list");
+      // Collapse the minor list whenever the route changes
+      document.getElementById("alert-panel").classList.remove("show-minor");
+
       if (!onRoute.length) {
         el.innerHTML = '<div class="alert-empty">Nothing on this route. You\'re clear.</div>';
         return;
       }
-      el.innerHTML = onRoute.map(d => `
+      const urgent = onRoute.filter(d => d.severity === "red");
+      const minor  = onRoute.filter(d => d.severity !== "red");
+      const row = d => `
         <div class="alert-item">
           <div class="alert-dot ${d.severity}"></div>
           <div><div class="alert-name">${d.name}</div><div class="alert-reason">${d.reason}</div></div>
-        </div>`).join("");
+        </div>`;
+
+      let html = urgent.length
+        ? urgent.map(row).join("")
+        : '<div class="alert-empty">No urgent disruptions on this route.</div>';
+
+      if (minor.length) {
+        html += `<div class="alert-more" onclick="toggleMinor(event)">
+          <span>${minor.length} minor ${minor.length === 1 ? "note" : "notes"}</span>
+          <span class="chev">▾</span></div>`;
+        html += `<div id="alert-minor">${minor.map(row).join("")}</div>`;
+      }
+      el.innerHTML = html;
+    }
+
+    function toggleMinor(e) {
+      e.stopPropagation();
+      document.getElementById("alert-panel").classList.toggle("show-minor");
     }
 
     function toggleAlerts() { document.getElementById("alert-panel").classList.toggle("open"); }
