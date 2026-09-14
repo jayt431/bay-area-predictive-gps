@@ -162,6 +162,14 @@
     .feed-name .sev.red { background: var(--red); } .feed-name .sev.yellow { background: var(--yellow); }
     .feed-meta { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
     .feed-addr { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .feed-more { padding: 11px 12px; font-size: 12px; font-family: var(--mono); letter-spacing: 0.04em;
+      color: var(--muted); cursor: pointer; border-top: 1px solid var(--line); display: flex;
+      align-items: center; justify-content: space-between; }
+    .feed-more:hover { color: var(--accent); }
+    .feed-more .chev { transition: transform 0.2s; }
+    #feed-panel.show-minor .feed-more .chev { transform: rotate(180deg); }
+    #feed-minor { display: none; }
+    #feed-panel.show-minor #feed-minor { display: block; }
 
     /* ---- Parking panel (bottom-right) ---- */
     #parking-panel { position: absolute; z-index: 3; right: 20px; bottom: 20px; width: 300px; padding: 8px; display: none; }
@@ -1300,11 +1308,14 @@
 
     function renderFeed(items) {
       const el = document.getElementById("feed-list");
+      document.getElementById("feed-panel").classList.remove("show-minor");
       if (!items.length) {
         el.innerHTML = '<div class="alert-empty">Nothing major happening nearby.</div>';
         return;
       }
-      el.innerHTML = items.map(e => `
+      const major = items.filter(e => e.severity === "red");
+      const minor = items.filter(e => e.severity !== "red");
+      const row = e => `
         <div class="feed-item">
           <div class="feed-icon">${e.icon}</div>
           <div>
@@ -1312,7 +1323,24 @@
             <div class="feed-meta">${e.meta}</div>
             ${e.sub ? `<div class="feed-addr">${e.sub}</div>` : ""}
           </div>
-        </div>`).join("");
+        </div>`;
+
+      let html = major.length
+        ? major.map(row).join("")
+        : '<div class="alert-empty">Nothing major happening nearby.</div>';
+
+      if (minor.length) {
+        html += `<div class="feed-more" onclick="toggleFeedMinor(event)">
+          <span>${minor.length} more nearby</span>
+          <span class="chev">▾</span></div>`;
+        html += `<div id="feed-minor">${minor.map(row).join("")}</div>`;
+      }
+      el.innerHTML = html;
+    }
+
+    function toggleFeedMinor(e) {
+      e.stopPropagation();
+      document.getElementById("feed-panel").classList.toggle("show-minor");
     }
 
     function pt(lon, lat) { return { type: "Point", coordinates: [lon, lat] }; }
