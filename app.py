@@ -230,6 +230,18 @@ def brief():
     return jsonify({"source": "fallback", "alert": _fallback_brief(ctx)})
 
 
+def _as_sentence(text: str) -> str:
+    """Close a fragment with a period so the next sentence can be appended.
+
+    Disruption reasons come from the data layer and don't reliably end in
+    punctuation, which ran them into the sentence that followed.
+    """
+    text = (text or "").strip()
+    if text and text[-1] not in ".!?":
+        text += "."
+    return text
+
+
 def _fallback_brief(ctx: dict) -> dict:
     """Deterministic brief from the assembled trip, no model call."""
     disruptions = ctx.get("disruptions") or []
@@ -240,7 +252,7 @@ def _fallback_brief(ctx: dict) -> dict:
     if reds:
         risk = "high"
         headline = f"{reds[0]['name']} is likely to affect your trip to {dest}."
-        why = f"{len(reds)} disruption(s) sit on your route, including {reds[0]['name']}. " + reds[0].get("reason", "")
+        why = f"{len(reds)} disruption(s) sit on your route, including {reds[0]['name']}. " + _as_sentence(reds[0].get("reason", ""))
         rec = "Consider leaving earlier or taking an alternate route."
     elif yellows:
         risk = "low"
@@ -255,14 +267,14 @@ def _fallback_brief(ctx: dict) -> dict:
 
     parking = ctx.get("parking") or []
     if parking:
-        why += f" Metered parking is available near the destination (e.g. {parking[0].get('name')})."
+        why = _as_sentence(why) + f" Metered parking is available near the destination (e.g. {parking[0].get('name')})."
 
     # Weather only moves the needle when the forecast raised a real alert (rain
     # likely or strong wind). News relevance is a judgment call, so the
     # rule-based path leaves headlines to the model rather than guessing.
     weather_alerts = (ctx.get("weather") or {}).get("alerts") or []
     if weather_alerts:
-        why += " " + " ".join(weather_alerts)
+        why = _as_sentence(why) + " " + " ".join(weather_alerts)
         if risk == "none":
             risk = "low"
             headline = f"Clear route to {dest}, but check the weather."

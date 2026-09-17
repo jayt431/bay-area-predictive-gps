@@ -263,7 +263,9 @@ def get_disruptions() -> list[dict]:
 # place). No database yet — fetched live, like weather/news/meters.
 # ---------------------------------------------------------------------------
 
-_SF311_URL = "https://data.sfgov.org/resource/vw6y-z8j6.json"
+# data.sfgov.org now 301s here; a redirected request carrying $select comes
+# back 403, so both DataSF calls address the new domain directly.
+_SF311_URL = "https://data.sf.gov/resource/vw6y-z8j6.json"
 
 # 311 service_name -> (friendly type, icon, base severity).
 # Deliberately narrow: only categories that actually block or obstruct the way.
@@ -346,7 +348,7 @@ def _avail_note(avail: str, ptype: str) -> str:
             "hard": "Street parking usually full"}[avail]
 
 
-_METERS_URL = "https://data.sfgov.org/resource/8vzz-qzz9.json"
+_METERS_URL = "https://data.sf.gov/resource/8vzz-qzz9.json"
 
 
 def _predict_avail(name: str, count: int) -> str:
