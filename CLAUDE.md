@@ -58,6 +58,11 @@ Claude call (no tool loop — data is already gathered) and returns a
 derives the same shape by rule. The UI tag reads "◆ AI brief" vs "◆ predicted"
 accordingly.
 
+The forecast is taken at the **destination** (`dest_lat`/`dest_lon`, sent by
+the frontend with the trip), not the home base — Bay Area weather is local
+enough that the two genuinely differ over a cross-city trip. A client that
+sends no destination coordinates falls back to `HOME`.
+
 Two details in `_weather_for_trip()` are easy to get wrong: the forecast only
 returns steps from now forward, so the window must look ahead rather than
 behind, and the steps are 3 hours apart, so the window is widened to at least

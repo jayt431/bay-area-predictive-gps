@@ -149,6 +149,19 @@ def _local_now() -> datetime:
     return datetime.utcnow() - timedelta(hours=8)
 
 
+def _weather_point(ctx: dict) -> tuple[float, float, str]:
+    """Where to forecast: the destination, which is what the driver is heading
+    into. Bay Area weather is local enough that the destination and the home
+    base can genuinely differ over a cross-city trip. Falls back to home when
+    the client sends no destination coordinates."""
+    try:
+        return (float(ctx["dest_lat"]), float(ctx["dest_lon"]),
+                ctx.get("destination") or "your destination")
+    except (KeyError, TypeError, ValueError):
+        home = mock_data.HOME
+        return home["lat"], home["lon"], home["label"]
+
+
 def _weather_for_trip(lat: float, lon: float, now: datetime, eta_min: int,
                      area: str) -> dict:
     """Forecast covering the hours the trip actually runs in.
@@ -185,12 +198,11 @@ def _live_conditions(ctx: dict) -> tuple[dict, dict]:
     except (TypeError, ValueError):
         eta_min = 0
 
-    home = mock_data.HOME
+    lat, lon, area = _weather_point(ctx)
 
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            w = pool.submit(_weather_for_trip, home["lat"], home["lon"], now,
-                            eta_min, home["label"])
+            w = pool.submit(_weather_for_trip, lat, lon, now, eta_min, area)
             n = pool.submit(mock_data.get_news_for_area, _BRIEF_NEWS_AREA, date)
             return w.result(timeout=15), n.result(timeout=15)
     except Exception as exc:

@@ -684,11 +684,11 @@
       await loadParking(lon, lat);
 
       tripRoute = route; tripDisruptions = onRoute; tripName = name;
-      loadBrief(name, route, onRoute);
+      loadBrief(name, route, onRoute, lon, lat);
     }
 
     // ---- AI trip brief (planning view) ----
-    async function loadBrief(name, route, onRoute) {
+    async function loadBrief(name, route, onRoute, destLon, destLat) {
       const brief = document.getElementById("brief");
       brief.classList.add("open");
       document.getElementById("brief-risk").className = "brief-risk";
@@ -699,6 +699,8 @@
 
       const context = {
         destination: name,
+        dest_lat: destLat,
+        dest_lon: destLon,
         eta_min: Math.round(route.duration / 60),
         distance_mi: +(route.distance / 1609.34).toFixed(1),
         disruptions: onRoute.map(d => ({ name: d.name, severity: d.severity, reason: d.reason })),
