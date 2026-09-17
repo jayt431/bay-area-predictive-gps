@@ -50,11 +50,22 @@ Endpoints:
 | `GET /map-test` | Standalone Mapbox pin test (persona data) |
 
 **AI trip brief:** the frontend assembles the concrete trip (destination, ETA,
-on-route disruptions, parking) and POSTs it to `/api/brief`. With a key,
-`agent.trip_brief_text()` makes one Claude call (no tool loop — data is already
-gathered) and returns a `RISK/HEADLINE/WHY/RECOMMENDATION` alert; without a key,
-`_fallback_brief()` derives the same shape by rule. The UI tag reads "◆ AI brief"
-vs "◆ predicted" accordingly.
+on-route disruptions, parking) and POSTs it to `/api/brief`. The server then
+adds the two live sources — weather and news — via `_live_conditions()`, fetched
+in parallel, before reasoning. With a key, `agent.trip_brief_text()` makes one
+Claude call (no tool loop — data is already gathered) and returns a
+`RISK/HEADLINE/WHY/RECOMMENDATION` alert; without a key, `_fallback_brief()`
+derives the same shape by rule. The UI tag reads "◆ AI brief" vs "◆ predicted"
+accordingly.
+
+Two details in `_weather_for_trip()` are easy to get wrong: the forecast only
+returns steps from now forward, so the window must look ahead rather than
+behind, and the steps are 3 hours apart, so the window is widened to at least
+3 hours or a short drive falls between two steps and matches nothing. News
+relevance is left entirely to the model — the prompt hands it raw headlines and
+says most will be irrelevant. The rule-based fallback uses only the structured
+weather alerts (rain likely, strong wind) and ignores headlines, because
+relevance is a judgment it cannot make.
 
 ## Architecture
 
@@ -152,8 +163,14 @@ on arrival.
   button appears, and re-centering plays a guarded eased snap-back (the
   per-frame `jumpTo` is suppressed via a `recentering` flag so it isn't cut off).
 
+- **Live weather + news in the brief.** `/api/brief` now enriches the trip with
+  the live OpenWeather forecast for the trip window and live Bay Area headlines
+  before the model reasons, so the two real sources reach the user-facing
+  surface instead of only the CLI agent.
+
 Next ideas: LEMMINO custom map style (Mapbox Studio); real break-in data (SFPD
-incidents); wire live weather/news into the brief; eventual accounts + DB.
+incidents); replace the mocked disruption pool with real feeds; eventual
+accounts + DB.
 
 ## Future directions (not yet started)
 

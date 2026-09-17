@@ -138,6 +138,14 @@ matters; a distant or timing-irrelevant one does not.
 a threat to seem useful.
 - Parking pressure at the destination is worth a mention when it looks tight, \
 but it is secondary to route disruptions.
+- Weather matters only when it would change the drive: rain likely during the \
+window, strong wind, poor visibility. Ordinary Bay Area fog or mild cool \
+temperatures are not a risk and should not be mentioned.
+- The news headlines are raw and unfiltered. Most will be irrelevant to this \
+trip. Cite a headline ONLY when it describes a disruption near this route or \
+destination, around this time. Ignore national news, opinion pieces, and \
+anything you cannot tie to this specific trip. Finding nothing usable in the \
+headlines is the normal outcome, not a failure.
 
 Return EXACTLY this structure, nothing else:
 
@@ -169,7 +177,43 @@ def _format_trip_context(ctx: dict) -> str:
             lines.append(f"  - {p.get('name')} ({p.get('count', '?')} metered spaces)")
     else:
         lines.append("  - no metered-parking data near the destination")
+
+    lines.append("")
+    lines.append("Live weather over the trip window:")
+    lines.extend(_weather_lines(ctx.get("weather") or {}))
+
+    lines.append("")
+    lines.append("Recent local headlines (raw, mostly irrelevant — judge for yourself):")
+    lines.extend(_news_lines(ctx.get("news") or {}))
     return "\n".join(lines)
+
+
+def _weather_lines(weather: dict) -> list[str]:
+    if weather.get("error"):
+        return [f"  - unavailable ({weather['error']})"]
+    if not weather.get("summary"):
+        return ["  - no forecast available for this window"]
+    line = f"  - {weather['summary']}, {weather.get('temp_f', '?')}F"
+    if weather.get("max_precip_probability") is not None:
+        line += f", {int(weather['max_precip_probability'] * 100)}% chance of precipitation"
+    if weather.get("max_wind_mph") is not None:
+        line += f", wind up to {weather['max_wind_mph']} mph"
+    line += f" ({weather.get('window', 'window unknown')})"
+    out = [line]
+    out.extend(f"  - ALERT: {a}" for a in weather.get("alerts", []))
+    return out
+
+
+def _news_lines(news: dict) -> list[str]:
+    if news.get("error"):
+        return [f"  - unavailable ({news['error']})"]
+    articles = news.get("articles") or []
+    if not articles:
+        return ["  - no recent headlines matched"]
+    return [
+        f"  - \"{a.get('headline')}\" ({a.get('source')}, {a.get('published', '')[:10]})"
+        for a in articles
+    ]
 
 
 def trip_brief_text(context: dict, client: anthropic.Anthropic | None = None) -> str:

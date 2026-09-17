@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, render_template, request
 
@@ -127,11 +129,85 @@ def civic():
     return jsonify(mock_data.get_civic_events(lat, lon, radius=radius))
 
 
+# The map app is single-user out of a fixed home base, so news is scoped to the
+# city that home sits in rather than to a per-route corridor.
+_BRIEF_NEWS_AREA = "San Francisco"
+
+try:  # stdlib on 3.9+, but needs system tzdata present
+    from zoneinfo import ZoneInfo
+
+    _PACIFIC = ZoneInfo("America/Los_Angeles")
+except Exception:  # pragma: no cover - fall back to a fixed offset
+    _PACIFIC = None
+
+
+def _local_now() -> datetime:
+    """Now in Bay Area local time. The server clock is UTC on Render, and the
+    trip window has to be expressed in the same local hours the forecast uses."""
+    if _PACIFIC is not None:
+        return datetime.now(_PACIFIC)
+    return datetime.utcnow() - timedelta(hours=8)
+
+
+def _weather_for_trip(lat: float, lon: float, now: datetime, eta_min: int,
+                     area: str) -> dict:
+    """Forecast covering the hours the trip actually runs in.
+
+    Two constraints make the window non-obvious: the forecast only returns
+    steps from now forward, so the window must look ahead rather than behind,
+    and the steps are 3 hours apart, so a window as short as a real drive can
+    fall between two of them and match nothing.
+    """
+    span = max(3, (eta_min // 60) + 1)
+    forecast = mock_data.get_weather_at(
+        lat, lon, now.strftime("%Y-%m-%d"), now.hour, min(now.hour + span, 23), area
+    )
+    if not forecast.get("error") and forecast.get("temp_f") is None and now.hour + span > 23:
+        # Trip runs past midnight; the step covering it belongs to tomorrow.
+        tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+        forecast = mock_data.get_weather_at(
+            lat, lon, tomorrow, 0, (now.hour + span) - 24, area
+        )
+    return forecast
+
+
+def _live_conditions(ctx: dict) -> tuple[dict, dict]:
+    """Live weather + news for the trip about to start, fetched in parallel.
+
+    Never raises and never blocks the brief for long: each source already has
+    its own request timeout and returns a dict carrying an `error` key when it
+    cannot answer, which the prompt renders as "unavailable".
+    """
+    now = _local_now()
+    date = now.strftime("%Y-%m-%d")
+    try:
+        eta_min = int(float(ctx.get("eta_min") or 0))
+    except (TypeError, ValueError):
+        eta_min = 0
+
+    home = mock_data.HOME
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            w = pool.submit(_weather_for_trip, home["lat"], home["lon"], now,
+                            eta_min, home["label"])
+            n = pool.submit(mock_data.get_news_for_area, _BRIEF_NEWS_AREA, date)
+            return w.result(timeout=15), n.result(timeout=15)
+    except Exception as exc:
+        note = f"live conditions unavailable: {exc}"
+        return {"error": note, "alerts": []}, {"error": note, "articles": []}
+
+
 @app.route("/api/brief", methods=["POST"])
 def brief():
     """Pre-trip alert for the current route. Uses Claude when ANTHROPIC_API_KEY
-    is set; otherwise returns a rule-based fallback so the UI always works."""
+    is set; otherwise returns a rule-based fallback so the UI always works.
+
+    The frontend sends the concrete trip (destination, ETA, on-route
+    disruptions, parking); the server adds live weather and news for the trip
+    window before reasoning over the whole picture."""
     ctx = request.get_json(silent=True) or {}
+    ctx["weather"], ctx["news"] = _live_conditions(ctx)
     if api_key_present():
         try:
             alert = _parse_alert(agent.trip_brief_text(ctx))
@@ -168,6 +244,18 @@ def _fallback_brief(ctx: dict) -> dict:
     parking = ctx.get("parking") or []
     if parking:
         why += f" Metered parking is available near the destination (e.g. {parking[0].get('name')})."
+
+    # Weather only moves the needle when the forecast raised a real alert (rain
+    # likely or strong wind). News relevance is a judgment call, so the
+    # rule-based path leaves headlines to the model rather than guessing.
+    weather_alerts = (ctx.get("weather") or {}).get("alerts") or []
+    if weather_alerts:
+        why += " " + " ".join(weather_alerts)
+        if risk == "none":
+            risk = "low"
+            headline = f"Clear route to {dest}, but check the weather."
+        if rec == "No action needed.":
+            rec = "Allow a little extra time for the conditions."
     return {"risk": risk, "headline": headline, "why": why, "recommendation": rec, "raw": None}
 
 

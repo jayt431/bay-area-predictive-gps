@@ -7,10 +7,15 @@ This is now a HYBRID layer:
   - Events   -> MOCKED (Ticketmaster swap documented as a next step)
   - Traffic  -> MOCKED baseline (real: Google Maps Routes API)
 
-Every fetch function takes a `route_id` and resolves the route's coordinates
-and corridor internally, so the agent never has to carry latitude/longitude
-around. That mirrors how a real system works: you don't ask the language model
-to remember coordinates, you look them up from the route.
+Every fetch function the agent sees takes a `route_id` and resolves the
+route's coordinates and corridor internally, so the agent never has to carry
+latitude/longitude around. That mirrors how a real system works: you don't ask
+the language model to remember coordinates, you look them up from the route.
+
+The live sources also expose a coordinate-based core (`get_weather_at`,
+`get_news_for_area`) for the map app, which has no route_id: it is single-user
+out of a fixed home base with an arbitrary destination. The `route_id`
+functions are thin wrappers over those.
 
 All routines are anchored to real Bay Area locations so the live weather and
 news calls return real, relevant data.
@@ -462,27 +467,26 @@ def get_traffic_baseline(route_id: str) -> dict:
 _OW_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
 
-def get_weather_forecast(route_id: str, date: str) -> dict:
-    """Live forecast for the route origin, filtered to the commute window.
+def get_weather_at(lat: float, lon: float, date: str, win_start: int, win_end: int,
+                   area: str = "the Bay Area") -> dict:
+    """Live forecast for a point, filtered to an hour window on `date`.
 
     Uses the free /data/2.5/forecast endpoint (5 days, 3-hour steps). The
     paid One Call API is not required. Timestamps are converted to local time
     using the timezone offset the API returns.
+
+    `win_start`/`win_end` are local hours. Keep the span at least 3 hours wide:
+    the forecast comes in 3-hour steps, so a narrower window can fall between
+    two of them and match nothing.
     """
     key = os.environ.get("OPENWEATHER_API_KEY")
     if not key:
         return {"date": date, "error": "OPENWEATHER_API_KEY not set", "alerts": []}
 
-    routine = get_routine(route_id)
-    dep_hour = int(routine["usual_departure"].split(":")[0])
-    win_start = dep_hour - 1
-    win_end = dep_hour + (routine["typical_duration_min"] // 60) + 1
-
     try:
         resp = requests.get(
             _OW_URL,
-            params={"lat": routine["lat"], "lon": routine["lon"],
-                    "appid": key, "units": "imperial"},
+            params={"lat": lat, "lon": lon, "appid": key, "units": "imperial"},
             timeout=10,
         )
         resp.raise_for_status()
@@ -506,7 +510,7 @@ def get_weather_forecast(route_id: str, date: str) -> dict:
 
     if not steps:
         return {
-            "date": date, "area": routine["origin"], "window": f"{win_start:02d}:00-{win_end:02d}:00",
+            "date": date, "area": area, "window": f"{win_start:02d}:00-{win_end:02d}:00",
             "summary": "No forecast for this window (beyond the 5-day range or no matching step).",
             "alerts": [],
         }
@@ -517,13 +521,13 @@ def get_weather_forecast(route_id: str, date: str) -> dict:
 
     alerts = []
     if max_pop >= 0.6:
-        alerts.append(f"High chance of rain ({int(max_pop*100)}%) during the commute window.")
+        alerts.append(f"High chance of rain ({int(max_pop*100)}%) during the trip window.")
     if max_wind >= 30:
         alerts.append(f"Strong winds up to {max_wind} mph during the window.")
 
     return {
         "date": date,
-        "area": routine["origin"],
+        "area": area,
         "window": f"{win_start:02d}:00-{win_end:02d}:00 local",
         "summary": worst["description"],
         "temp_f": worst["temp_f"],
@@ -534,6 +538,18 @@ def get_weather_forecast(route_id: str, date: str) -> dict:
     }
 
 
+def get_weather_forecast(route_id: str, date: str) -> dict:
+    """Live forecast for the route origin, filtered to the commute window."""
+    routine = get_routine(route_id)
+    dep_hour = int(routine["usual_departure"].split(":")[0])
+    return get_weather_at(
+        routine["lat"], routine["lon"], date,
+        dep_hour - 1,
+        dep_hour + (routine["typical_duration_min"] // 60) + 1,
+        area=routine["origin"],
+    )
+
+
 # ---------------------------------------------------------------------------
 # NEWS (LIVE, NewsAPI /v2/everything, free developer tier, Bay Area scoped)
 # ---------------------------------------------------------------------------
@@ -541,19 +557,17 @@ def get_weather_forecast(route_id: str, date: str) -> dict:
 _NEWS_URL = "https://newsapi.org/v2/everything"
 
 
-def get_local_news(route_id: str, date: str) -> dict:
-    """Recent Bay Area news that could signal a route disruption.
+def get_news_for_area(area: str, date: str) -> dict:
+    """Recent Bay Area news that could signal a disruption near `area`.
 
     News is inherently about what has recently been reported, not a future
     date, so `date` is contextual only. The query is scoped to the Bay Area
-    and to this route's corridor, plus disruption keywords.
+    and to `area`, plus disruption keywords.
     """
     key = os.environ.get("NEWSAPI_KEY")
     if not key:
         return {"error": "NEWSAPI_KEY not set", "articles": []}
 
-    routine = get_routine(route_id)
-    area = routine["news_area"]
     # Bay Area scope + this corridor + disruption signals.
     disruption = "traffic OR closure OR protest OR construction OR crash OR delay OR flooding"
     query = f'("{area}" OR "Bay Area") AND ({disruption})'
@@ -582,3 +596,8 @@ def get_local_news(route_id: str, date: str) -> dict:
         for a in data.get("articles", [])
     ]
     return {"query_area": area, "as_of": date, "articles": articles}
+
+
+def get_local_news(route_id: str, date: str) -> dict:
+    """Recent Bay Area news scoped to this route's corridor."""
+    return get_news_for_area(get_routine(route_id)["news_area"], date)
