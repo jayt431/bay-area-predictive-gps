@@ -177,7 +177,8 @@
     .pp-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
     .pp-btn { background: none; border: 1px solid var(--line); color: var(--accent); font-family: var(--mono);
       font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
-    .pp-btn:hover { border-color: var(--accent); }
+    .pp-btn:hover:not(:disabled) { border-color: var(--accent); }
+    .pp-btn:disabled { color: var(--muted); border-color: var(--line); cursor: default; opacity: 0.55; }
     .pk-item { display: flex; gap: 12px; padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
     .pk-item:last-child { border-bottom: none; }
     .pk-badge { flex-shrink: 0; align-self: flex-start; font-size: 10px; font-weight: 700; font-family: var(--mono);
@@ -733,13 +734,20 @@
 
     // ---- Parking (panel auto-shows; geometry renders on "Show on map") ----
     let currentZones = [];
+    let parkingError = null;
     let currentDestPt = null;
     let parkingShown = false;
     let lastRouteBounds = null;
     let tripRoute = null, tripDisruptions = [], tripName = "";
 
     async function loadParking(lon, lat) {
-      const data = await (await fetch(`/api/meters?lat=${lat}&lon=${lon}`)).json();
+      let data;
+      try {
+        data = await (await fetch(`/api/meters?lat=${lat}&lon=${lon}`)).json();
+      } catch (e) {
+        data = { error: String(e), streets: [] };
+      }
+      parkingError = data.error || null;
       currentZones = (data.streets || []).map(s => ({
         name: s.street, lat: s.lat, lon: s.lon, availability: s.availability,
         risk: s.risk, note: s.note, type: "street", count: s.count, meters: s.meters || [],
@@ -751,8 +759,7 @@
       map.getSource("pbuildings").setData(emptyFC());
       map.getSource("pcaution").setData(emptyFC());
       parkingShown = false;
-      const btn = document.getElementById("pk-show");
-      if (btn) btn.textContent = "Show on map ▸";
+      setParkingBtn();
 
       // Meter dots are data-driven, so show them on the map right away — they
       // reveal where parking is as you drive toward the destination.
@@ -764,8 +771,20 @@
       renderParkingPanel(currentZones);
     }
 
+    // The button is only live when there is geometry to draw. Without this it
+    // silently no-ops wherever SFMTA has no meters — the whole Peninsula, SFO
+    // included — and looks broken rather than empty.
+    function setParkingBtn() {
+      const btn = document.getElementById("pk-show");
+      if (!btn) return;
+      const usable = currentZones.length > 0;
+      btn.disabled = !usable;
+      btn.textContent = usable ? "Show on map ▸" : "No map data";
+    }
+
     function toggleParkingView() {
       const btn = document.getElementById("pk-show");
+      if (!currentZones.length) return;
       if (!parkingShown) {
         showParkingGeometry();
         btn.textContent = "‹ Back to route";
@@ -1155,7 +1174,11 @@
       const streets = zones.filter(z => z.type !== "garage").slice(0, 5);
       const garages = zones.filter(z => z.type === "garage").slice(0, 4);
       if (!streets.length && !garages.length) {
-        list.innerHTML = '<div class="alert-empty">No parking data near here.</div>';
+        // Two very different empty states: the feed failed, or the feed is fine
+        // and this place genuinely has no metered parking.
+        list.innerHTML = parkingError
+          ? '<div class="alert-empty">Parking data unavailable right now.</div>'
+          : '<div class="alert-empty">No metered parking here.<br><span style="opacity:0.7">SFMTA meters cover San Francisco streets only.</span></div>';
         return;
       }
       let html = "";
