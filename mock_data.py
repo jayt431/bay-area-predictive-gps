@@ -23,10 +23,12 @@ news calls return real, relevant data.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import random
 from datetime import datetime, timedelta
+from time import monotonic
 
 import requests
 
@@ -249,8 +251,169 @@ _DISRUPTIONS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# DISRUPTION POOL (LIVE via 511 SF Bay, falls back to the mock pool above)
+#
+# 511.org publishes Open511 traffic events for all major highways across the
+# nine-county Bay Area. Two things drive the design here:
+#
+#   1. The rate limit is 60 requests/hour per token. One call returns the whole
+#      region, and the frontend already filters the pool against the drawn
+#      route, so we fetch once per TTL and serve every visitor from cache.
+#      A 120s TTL caps us at 30 calls/hour — half the ceiling.
+#   2. Coverage is highways, not surface streets. This complements the SF 311
+#      civic feed (which catches blocked city streets); it does not replace it.
+#
+# Attribution of 511.org as the data provider is required by their terms.
+# ---------------------------------------------------------------------------
+
+_TRAFFIC_511_URL = "https://api.511.org/traffic/events"
+_511_TTL_SECONDS = 120
+# Bound the payload the browser has to chew through. Sorted most-severe first
+# before the cut, so trimming drops the least consequential events.
+_511_MAX_EVENTS = 250
+_511_CACHE: dict = {"at": 0.0, "events": None}
+
+# Open511 event_type -> the vocabulary the UI already speaks.
+_511_TYPES = {
+    "CONSTRUCTION": "construction",
+    "SPECIAL_EVENT": "event",
+    "INCIDENT": "incident",
+    "WEATHER_CONDITION": "weather",
+    "ROAD_CONDITION": "road",
+}
+_511_SEVERITY_RANK = {"MAJOR": 0, "MODERATE": 1, "MINOR": 2, "UNKNOWN": 3}
+
+
+def _511_point(geography: dict | None) -> tuple[float, float] | None:
+    """One representative (lon, lat) for an event.
+
+    Open511 geography is GeoJSON, so coordinates are [lon, lat] — the reverse
+    of the (lat, lon) order used elsewhere in this module. A LineString covers
+    a stretch of road; its midpoint is the fairest single point to compare
+    against the route.
+    """
+    if not isinstance(geography, dict):
+        return None
+    coords = geography.get("coordinates")
+    kind = (geography.get("type") or "").lower()
+    try:
+        if kind == "point":
+            return float(coords[0]), float(coords[1])
+        if kind == "linestring":
+            mid = coords[len(coords) // 2]
+            return float(mid[0]), float(mid[1])
+        if kind == "multilinestring":
+            line = coords[0]
+            mid = line[len(line) // 2]
+            return float(mid[0]), float(mid[1])
+    except (TypeError, ValueError, IndexError, KeyError):
+        return None
+    return None
+
+
+def _511_when(event: dict) -> str:
+    """Flatten Open511's structured schedule into the one line the UI shows.
+
+    The frontend renders `${note} (${time} · N km from route)`, so this must
+    always return something readable rather than an empty string.
+    """
+    schedule = event.get("schedule") or {}
+    intervals = schedule.get("intervals") or []
+    if intervals:
+        first = intervals[0]
+        # Intervals are ISO "start/end" strings; the start is what a driver
+        # needs. Some feeds send an object instead, so handle both.
+        raw = first.split("/")[0] if isinstance(first, str) else (first or {}).get("start")
+        if raw:
+            return str(raw)[:16].replace("T", " ")
+    if schedule.get("recurring_schedules"):
+        return "Recurring"
+    updated = event.get("updated") or event.get("created") or ""
+    return str(updated)[:16].replace("T", " ") if updated else "Ongoing"
+
+
+def _511_note(event: dict) -> str:
+    """Short human description. Falls back through the fields 511 may omit."""
+    for key in ("description", "headline"):
+        text = (event.get(key) or "").strip()
+        if text:
+            return text if len(text) <= 180 else text[:177] + "..."
+    roads = event.get("roads") or []
+    name = (roads[0].get("name") if roads and isinstance(roads[0], dict) else "") or "the highway"
+    return f"Reported on {name}."
+
+
+def _fetch_511_events() -> list[dict] | None:
+    """One call for the whole region. Returns None when 511 can't answer."""
+    token = os.environ.get("TRAFFIC_511_TOKEN")
+    if not token:
+        return None
+    try:
+        resp = requests.get(
+            _TRAFFIC_511_URL,
+            params={"api_key": token, "format": "json"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        # 511 serves this endpoint with a UTF-8 BOM, which json.loads rejects;
+        # utf-8-sig strips it when present and is harmless when it isn't.
+        data = json.loads(resp.content.decode("utf-8-sig"))
+    except Exception:
+        return None
+
+    events = data.get("events") if isinstance(data, dict) else data
+    if not isinstance(events, list):
+        return None
+
+    events.sort(key=lambda e: _511_SEVERITY_RANK.get(
+        (e.get("severity") or "UNKNOWN").upper(), 3))
+
+    pool = []
+    for event in events[:_511_MAX_EVENTS]:
+        point = _511_point(event.get("geography"))
+        if not point:
+            continue  # nothing to match against a route
+        lon, lat = point
+        severity = (event.get("severity") or "UNKNOWN").upper()
+        pool.append({
+            "id": str(event.get("id") or f"511-{len(pool)}"),
+            "name": (event.get("headline") or "Traffic event").strip(),
+            "type": _511_TYPES.get((event.get("event_type") or "").upper(), "incident"),
+            "lat": round(lat, 6),
+            "lon": round(lon, 6),
+            "time": _511_when(event),
+            "note": _511_note(event),
+            # 511's own impact rating. The frontend derives red/yellow from
+            # distance and overwrites `severity`, so this rides under its own
+            # key — available to weight alerts by real impact later.
+            "impact": severity,
+            "source": "511.org",
+        })
+    return pool
+
+
 def get_disruptions() -> list[dict]:
-    """Return the Bay Area pool of possible disruptions (mocked for now)."""
+    """The Bay Area pool of possible disruptions.
+
+    Live from 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else the mock pool.
+    A failed fetch serves the last good response if one is cached, and the mock
+    pool otherwise — a dead upstream degrades the feed, it never empties the map.
+    """
+    if not os.environ.get("TRAFFIC_511_TOKEN"):
+        return [dict(d) for d in _DISRUPTIONS]
+
+    cached = _511_CACHE.get("events")
+    if cached is not None and (monotonic() - _511_CACHE["at"]) < _511_TTL_SECONDS:
+        return [dict(d) for d in cached]
+
+    fresh = _fetch_511_events()
+    if fresh is not None:
+        _511_CACHE["events"] = fresh
+        _511_CACHE["at"] = monotonic()
+        return [dict(d) for d in fresh]
+    if cached is not None:
+        return [dict(d) for d in cached]  # stale beats empty
     return [dict(d) for d in _DISRUPTIONS]
 
 

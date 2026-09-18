@@ -26,6 +26,8 @@ Env vars:
   agent fall back gracefully
 - `OPENWEATHER_API_KEY` — live weather (free tier)
 - `NEWSAPI_KEY` — live Bay Area news (free developer tier)
+- `TRAFFIC_511_TOKEN` — live 511 SF Bay traffic events; without it the
+  disruption pool falls back to the mock list in `mock_data._DISRUPTIONS`
 
 Every source degrades gracefully; a missing key downgrades one feature, never
 breaks the app. **After each meaningful change: commit + push** (backs up to
@@ -43,7 +45,7 @@ Endpoints:
 |-------|---------|
 | `GET /` | The map GPS UI |
 | `GET /api/config` | Home base (`mock_data.HOME`) |
-| `GET /api/disruptions` | Bay Area disruption pool (mocked) |
+| `GET /api/disruptions` | Bay Area disruption pool. Live 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else mocked |
 | `GET /api/parking?lat&lon` | Mocked parking zones (legacy; UI now uses meters) |
 | `GET /api/meters?lat&lon` | **Real** SF metered streets (DataSF), grouped by street |
 | `POST /api/brief` | Pre-trip alert. Claude when `ANTHROPIC_API_KEY` set, else rule-based `_fallback_brief` |
@@ -71,6 +73,35 @@ relevance is left entirely to the model — the prompt hands it raw headlines an
 says most will be irrelevant. The rule-based fallback uses only the structured
 weather alerts (rain likely, strong wind) and ignores headlines, because
 relevance is a judgment it cannot make.
+
+## 511 SF Bay (the disruption pool)
+
+`get_disruptions()` feeds the red/yellow on-route alerts — the map's headline
+feature. It pulls Open511 traffic events from `api.511.org/traffic/events`.
+
+Two constraints shaped the design, and both are easy to trip over:
+
+- **60 requests/hour, per token.** One call returns the whole nine-county
+  region and the frontend already filters the pool against the drawn route, so
+  we fetch once per TTL and serve every visitor from `_511_CACHE`. The 120s TTL
+  caps us at 30 calls/hour. Lowering it approaches the ceiling fast.
+- **Highways, not surface streets.** 511 catches a crash on the Bay Bridge
+  approach; it will not catch a blocked street in the Mission. It complements
+  the SF 311 civic feed rather than replacing it.
+
+Mapping notes: Open511 geography is GeoJSON, so coordinates are `[lon, lat]` —
+reversed from the `(lat, lon)` order used everywhere else in `mock_data`. A
+LineString covers a stretch of road and is reduced to its midpoint. 511 serves
+this endpoint with a UTF-8 BOM, so the body is decoded `utf-8-sig` before
+`json.loads`. Their `severity` rides under the key `impact`, because the
+frontend computes `severity` itself from distance and would overwrite it.
+
+Degradation is layered: no token → mock pool; fetch fails with a warm cache →
+last good response; fetch fails cold → mock pool. The map is never empty.
+
+**511 requires acknowledgement as the data provider.** The alert panel carries a
+"Traffic data · 511 SF Bay" credit that unhides only when the loaded pool
+actually came from them.
 
 ## Architecture
 
@@ -173,9 +204,12 @@ on arrival.
   before the model reasons, so the two real sources reach the user-facing
   surface instead of only the CLI agent.
 
+- **Live disruption pool (511 SF Bay).** The red/yellow route alerts now come
+  from real Bay Area traffic events when `TRAFFIC_511_TOKEN` is set, region-wide
+  rather than SF-only. See the 511 section above.
+
 Next ideas: LEMMINO custom map style (Mapbox Studio); real break-in data (SFPD
-incidents); replace the mocked disruption pool with real feeds; eventual
-accounts + DB.
+incidents); live events via Ticketmaster; eventual accounts + DB.
 
 ## Future directions (not yet started)
 

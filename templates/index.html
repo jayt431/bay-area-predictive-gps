@@ -135,6 +135,9 @@
     .alert-name { font-size: 14px; color: var(--ink); margin-bottom: 3px; }
     .alert-reason { font-size: 12px; color: var(--muted); line-height: 1.45; }
     .alert-empty { padding: 20px 12px; color: var(--muted); font-size: 13px; text-align: center; }
+    /* 511 requires acknowledgement as the data provider wherever its data shows. */
+    .alert-credit { padding: 8px 12px; color: var(--muted); font-size: 10px; font-family: var(--mono);
+      letter-spacing: 0.06em; text-transform: uppercase; border-top: 1px solid rgba(255,255,255,0.05); }
     .alert-more { padding: 11px 12px; font-size: 12px; font-family: var(--mono); letter-spacing: 0.04em;
       color: var(--muted); cursor: pointer; border-top: 1px solid var(--line); display: flex;
       align-items: center; justify-content: space-between; }
@@ -342,6 +345,7 @@
       <span class="mono-label" id="alert-count"></span>
     </div>
     <div id="alert-list"></div>
+    <div id="alert-credit" class="alert-credit" hidden>Traffic data · 511 SF Bay</div>
   </div>
 
   <!-- Parking panel -->
@@ -410,6 +414,10 @@
       ]);
       home = cfg.home;
       disruptions = dis.disruptions || [];
+      // Only credit 511 when their data is what we actually loaded; the mock
+      // pool carries no source.
+      const credit = document.getElementById("alert-credit");
+      if (credit) credit.hidden = !disruptions.some(d => d.source === "511.org");
 
       mapboxgl.accessToken = TOKEN;
       window.map = new mapboxgl.Map({
