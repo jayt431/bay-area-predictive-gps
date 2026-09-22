@@ -322,26 +322,78 @@ def _511_when(event: dict) -> str:
     intervals = schedule.get("intervals") or []
     if intervals:
         first = intervals[0]
-        # Intervals are ISO "start/end" strings; the start is what a driver
-        # needs. Some feeds send an object instead, so handle both.
-        raw = first.split("/")[0] if isinstance(first, str) else (first or {}).get("start")
-        if raw:
-            return str(raw)[:16].replace("T", " ")
+        # Intervals are ISO "start/end"; some feeds send an object instead.
+        if isinstance(first, str):
+            start, _, end = first.partition("/")
+        else:
+            start, end = (first or {}).get("start", ""), (first or {}).get("end", "")
+        now = datetime.utcnow()
+        started, ends = _511_parse(start), _511_parse(end)
+        # Most of this feed is months-long construction. "Started last
+        # September" is useless to a driver; when it ends is the useful half.
+        if started and started <= now:
+            return f"Until {_511_day(ends)}" if ends else "Ongoing"
+        if started:
+            return f"From {_511_day(started)}"
     if schedule.get("recurring_schedules"):
         return "Recurring"
     updated = event.get("updated") or event.get("created") or ""
     return str(updated)[:16].replace("T", " ") if updated else "Ongoing"
 
 
+def _511_road(event: dict) -> str:
+    """The road an event sits on, e.g. "I-80"."""
+    roads = event.get("roads") or []
+    if roads and isinstance(roads[0], dict):
+        return (roads[0].get("name") or "").strip()
+    return ""
+
+
+def _511_name(event: dict) -> str:
+    """A short label for the alert list.
+
+    511 headlines are a full paragraph — agency, road, direction, cross street,
+    lane status and the full date range in one string. Too long for a list row,
+    so the label is built from the subtype and the road, and the headline is
+    kept for the detail line.
+    """
+    subtype = ""
+    subtypes = event.get("event_subtypes") or []
+    if subtypes and isinstance(subtypes[0], str):
+        subtype = subtypes[0].strip()
+    if not subtype:
+        subtype = _511_TYPES.get((event.get("event_type") or "").upper(), "Traffic event")
+    road = _511_road(event)
+    label = f"{subtype} · {road}" if road else subtype
+    return label[:1].upper() + label[1:]
+
+
+def _511_parse(stamp: str) -> datetime | None:
+    """Parse 511's ISO stamps ("2026-11-30T16:59Z"). Returns None on anything odd."""
+    if not stamp:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%MZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(str(stamp).strip(), fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _511_day(when: datetime | None) -> str:
+    """"Nov 30" — the date is what matters for a months-long closure."""
+    return when.strftime("%b %d").replace(" 0", " ") if when else "further notice"
+
+
 def _511_note(event: dict) -> str:
-    """Short human description. Falls back through the fields 511 may omit."""
+    """The detail line. 511 sends no `description` in practice, so the headline
+    carries the substance — trimmed, since it runs to a paragraph."""
     for key in ("description", "headline"):
         text = (event.get(key) or "").strip()
         if text:
             return text if len(text) <= 180 else text[:177] + "..."
-    roads = event.get("roads") or []
-    name = (roads[0].get("name") if roads and isinstance(roads[0], dict) else "") or "the highway"
-    return f"Reported on {name}."
+    road = _511_road(event) or "the highway"
+    return f"Reported on {road}."
 
 
 def _fetch_511_events() -> list[dict] | None:
@@ -352,12 +404,16 @@ def _fetch_511_events() -> list[dict] | None:
     try:
         resp = requests.get(
             _TRAFFIC_511_URL,
-            params={"api_key": token, "format": "json"},
+            # Without an explicit limit the API pages at 20, which silently
+            # drops most of the region. 500 is the Open511 maximum and the
+            # whole Bay Area sits well inside it (26 active events today).
+            params={"api_key": token, "format": "json",
+                    "limit": 500, "status": "ACTIVE"},
             timeout=15,
         )
         resp.raise_for_status()
-        # 511 serves this endpoint with a UTF-8 BOM, which json.loads rejects;
-        # utf-8-sig strips it when present and is harmless when it isn't.
+        # The feed may carry a UTF-8 BOM, which json.loads rejects; utf-8-sig
+        # strips it when present and is harmless when it isn't.
         data = json.loads(resp.content.decode("utf-8-sig"))
     except Exception:
         return None
@@ -378,7 +434,7 @@ def _fetch_511_events() -> list[dict] | None:
         severity = (event.get("severity") or "UNKNOWN").upper()
         pool.append({
             "id": str(event.get("id") or f"511-{len(pool)}"),
-            "name": (event.get("headline") or "Traffic event").strip(),
+            "name": _511_name(event),
             "type": _511_TYPES.get((event.get("event_type") or "").upper(), "incident"),
             "lat": round(lat, 6),
             "lon": round(lon, 6),
