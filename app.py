@@ -21,12 +21,17 @@ from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, render_template, request
 
+import alerts
+import calendar_sync
 import mock_data
+import scheduler
+import store
 import tools
 import agent
 from agent import RouteIntelligenceAgent, api_key_present
 
 app = Flask(__name__)
+store.init_db()
 
 
 @app.route("/")
@@ -219,15 +224,23 @@ def brief():
     disruptions, parking); the server adds live weather and news for the trip
     window before reasoning over the whole picture."""
     ctx = request.get_json(silent=True) or {}
+    return jsonify(compute_brief(ctx))
+
+
+def compute_brief(ctx: dict) -> dict:
+    """Enrich a trip with live conditions and reason over it.
+
+    Shared by the map (POST /api/brief) and the scheduled-alert job, so an
+    emailed alert and the on-screen one are produced by the same code.
+    """
     ctx["weather"], ctx["news"] = _live_conditions(ctx)
     if api_key_present():
         try:
-            alert = _parse_alert(agent.trip_brief_text(ctx))
-            return jsonify({"source": "ai", "alert": alert})
+            return {"source": "ai", "alert": _parse_alert(agent.trip_brief_text(ctx))}
         except Exception as exc:
-            # Never break the UI on an API hiccup — fall back.
-            return jsonify({"source": "fallback", "note": str(exc), "alert": _fallback_brief(ctx)})
-    return jsonify({"source": "fallback", "alert": _fallback_brief(ctx)})
+            # Never break the caller on an API hiccup — fall back.
+            return {"source": "fallback", "note": str(exc), "alert": _fallback_brief(ctx)}
+    return {"source": "fallback", "alert": _fallback_brief(ctx)}
 
 
 def _as_sentence(text: str) -> str:
@@ -281,6 +294,137 @@ def _fallback_brief(ctx: dict) -> dict:
         if rec == "No action needed.":
             rec = "Allow a little extra time for the conditions."
     return {"risk": risk, "headline": headline, "why": why, "recommendation": rec, "raw": None}
+
+
+# ---------------------------------------------------------------------------
+# Scheduler
+# ---------------------------------------------------------------------------
+
+@app.route("/api/schedule")
+def get_schedule():
+    """Everything the scheduler panel needs in one call."""
+    url = store.get_setting(scheduler.ICS_URL_KEY)
+    return jsonify({
+        "trips": scheduler.upcoming(),
+        "all": store.list_trips(),
+        "calendar": {
+            "connected": bool(url),
+            # The feed URL is a bearer credential; the browser gets a shape, not the secret.
+            "hint": (url.split("/")[2] if url and "/" in url else None),
+        },
+        "alert_email": store.get_setting(scheduler.ALERT_EMAIL_KEY),
+    })
+
+
+@app.route("/api/schedule", methods=["POST"])
+def add_schedule():
+    """Add a manual trip: either a one-off `arrive_at` or `days` + `time_of_day`."""
+    body = request.get_json(silent=True) or {}
+    try:
+        lat, lon = float(body["dest_lat"]), float(body["dest_lon"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "dest_lat and dest_lon are required"}), 400
+    if not (body.get("arrive_at") or (body.get("days") and body.get("time_of_day"))):
+        return jsonify({"error": "need arrive_at, or days plus time_of_day"}), 400
+
+    trip = store.save_trip({
+        "label": (body.get("label") or body.get("destination") or "Trip").strip()[:120],
+        "destination": (body.get("destination") or "").strip()[:250],
+        "dest_lat": lat, "dest_lon": lon,
+        "arrive_at": body.get("arrive_at"),
+        "days": body.get("days"),
+        "time_of_day": body.get("time_of_day"),
+        "source": "manual",
+    })
+    return jsonify({"trip": trip}), 201
+
+
+@app.route("/api/schedule/<trip_id>", methods=["DELETE"])
+def remove_schedule(trip_id):
+    return jsonify({"deleted": store.delete_trip(trip_id)})
+
+
+@app.route("/api/schedule/calendar", methods=["POST"])
+def connect_calendar():
+    """Connect, re-sync, or disconnect an .ics feed.
+
+    Sending url: null disconnects and clears everything that came from it, so
+    a disconnect leaves no orphaned calendar trips behind.
+    """
+    body = request.get_json(silent=True) or {}
+    url = (body.get("url") or "").strip()
+    if not url:
+        store.set_setting(scheduler.ICS_URL_KEY, None)
+        removed = store.delete_by_source("ics")
+        return jsonify({"connected": False, "removed": removed})
+    if not url.startswith(("http://", "https://")):
+        return jsonify({"error": "that does not look like a calendar URL"}), 400
+
+    # Verify before saving, so a bad URL never becomes stored state.
+    if calendar_sync.fetch_ics(url) is None:
+        return jsonify({"error": "could not fetch or parse that calendar feed"}), 400
+    store.set_setting(scheduler.ICS_URL_KEY, url)
+    return jsonify({"connected": True, "sync": scheduler.sync_calendar()})
+
+
+@app.route("/api/schedule/sync", methods=["POST"])
+def sync_calendar_now():
+    result = scheduler.sync_calendar()
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/api/schedule/settings", methods=["POST"])
+def schedule_settings():
+    body = request.get_json(silent=True) or {}
+    if "alert_email" in body:
+        email = (body.get("alert_email") or "").strip()
+        store.set_setting(scheduler.ALERT_EMAIL_KEY, email or None)
+    return jsonify({"alert_email": store.get_setting(scheduler.ALERT_EMAIL_KEY)})
+
+
+@app.route("/api/alerts/run", methods=["POST"])
+def run_alerts():
+    """Brief every trip starting soon. Called by a scheduler, not a browser.
+
+    Protected by `CRON_SECRET` when set. Each occurrence is alerted once —
+    the send is recorded per trip and start time, so a cron that fires twice
+    (or retries) does not email twice.
+    """
+    secret = os.environ.get("CRON_SECRET")
+    if secret and request.headers.get("X-Cron-Secret") != secret:
+        return jsonify({"error": "unauthorized"}), 401
+
+    hours = request.args.get("within_hours", 24, type=float)
+    dry_run = request.args.get("dry_run", "").lower() in ("1", "true", "yes")
+    email = store.get_setting(scheduler.ALERT_EMAIL_KEY)
+    results = []
+
+    for trip in scheduler.upcoming(within_hours=hours):
+        marker = f"alerted:{trip['id']}:{trip['next_at']}"
+        if store.get_setting(marker):
+            results.append({"trip": trip["label"], "skipped": "already alerted"})
+            continue
+
+        context = alerts.build_context(trip)
+        if not context:
+            results.append({"trip": trip["label"], "error": "could not build a route"})
+            continue
+
+        brief = compute_brief(context)
+        alert = brief.get("alert") or {}
+        subject, body = alerts.format_email(trip, alert, context)
+        outcome = {"trip": trip["label"], "next_at": trip["next_at"],
+                   "risk": alert.get("risk"), "source": brief.get("source"),
+                   "subject": subject}
+        if dry_run:
+            outcome["body"] = body
+        else:
+            outcome["delivery"] = alerts.send_email(email, subject, body)
+            if outcome["delivery"].get("sent"):
+                store.set_setting(marker, datetime.utcnow().isoformat(timespec="seconds"))
+        results.append(outcome)
+
+    return jsonify({"checked_within_hours": hours, "alerts": results})
 
 
 @app.route("/map-test")

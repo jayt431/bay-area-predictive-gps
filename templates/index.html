@@ -155,6 +155,42 @@
     #feed-panel { position: absolute; z-index: 4; top: 76px; right: 20px; width: 340px; padding: 8px;
       max-height: calc(100vh - 100px); overflow-y: auto; display: none; }
     #feed-panel.open { display: block; }
+    /* Scheduler */
+    #sched-btn { position: absolute; z-index: 3; top: 20px; right: 192px; height: 46px; padding: 0 16px;
+      border-radius: 23px; display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink);
+      font-family: var(--sans); font-size: 13px; font-weight: 600; }
+    #sched-btn:hover { border-color: var(--accent); }
+    #sched-panel { position: absolute; z-index: 4; top: 76px; right: 20px; width: 360px; padding: 8px;
+      max-height: calc(100vh - 100px); overflow-y: auto; display: none; }
+    #sched-panel.open { display: block; }
+    .sc-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
+    .sc-sec { padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .sc-sec:last-child { border-bottom: none; }
+    .sc-row { display: flex; align-items: center; gap: 10px; padding: 9px 4px;
+      border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .sc-row:last-child { border-bottom: none; }
+    .sc-row .nm { flex: 1; font-size: 13px; color: var(--ink); }
+    .sc-row .when { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .sc-tag { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 2px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+    .sc-del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 0 2px; }
+    .sc-del:hover { color: #FF3B30; }
+    .sc-input { width: 100%; box-sizing: border-box; background: rgba(255,255,255,0.05);
+      border: 1px solid var(--line); border-radius: 7px; color: var(--ink); font-family: var(--sans);
+      font-size: 13px; padding: 8px 10px; margin-top: 6px; }
+    .sc-input:focus { outline: none; border-color: var(--accent); }
+    .sc-days { display: flex; gap: 4px; margin-top: 8px; }
+    .sc-day { flex: 1; text-align: center; font-family: var(--mono); font-size: 10px; padding: 6px 0;
+      border: 1px solid var(--line); border-radius: 6px; color: var(--muted); cursor: pointer; user-select: none; }
+    .sc-day.on { border-color: var(--accent); color: var(--accent); }
+    .sc-btn { width: 100%; margin-top: 8px; background: none; border: 1px solid var(--line);
+      color: var(--accent); font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+      text-transform: uppercase; padding: 8px; border-radius: 7px; cursor: pointer; }
+    .sc-btn:hover:not(:disabled) { border-color: var(--accent); }
+    .sc-btn:disabled { color: var(--muted); opacity: 0.55; cursor: default; }
+    .sc-note { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.45; }
+    .sc-note.err { color: #FF8A80; }
+    .sc-note.ok { color: var(--accent); }
     .feed-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
     .feed-place { font-size: 14px; font-weight: 600; color: var(--ink); margin-top: 3px; }
     .feed-item { display: flex; gap: 11px; padding: 11px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
@@ -318,6 +354,47 @@
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
       <path d="M21 10c0 7-9 12-9 12s-9-5-9-12a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle>
     </svg>Nearby
+  </div>
+
+  <div id="sched-btn" class="glass" onclick="toggleSchedule()">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M16 2v4M8 2v4M3 10h18"></path>
+    </svg>Schedule
+  </div>
+
+  <!-- Scheduler panel -->
+  <div id="sched-panel" class="glass">
+    <div class="sc-head"><span class="mono-label">Scheduled trips</span></div>
+    <div class="sc-sec"><div id="sched-list"></div></div>
+
+    <div class="sc-sec">
+      <span class="mono-label">Add this destination</span>
+      <div id="sched-add-body">
+        <input id="sched-label" class="sc-input" placeholder="Label (e.g. Work)" />
+        <input id="sched-time" class="sc-input" type="time" value="08:30" />
+        <div class="sc-days" id="sched-days"></div>
+        <div class="sc-note">Pick days to repeat weekly, or leave them off for a one-time trip.</div>
+        <input id="sched-date" class="sc-input" type="date" />
+        <button class="sc-btn" id="sched-add" onclick="addScheduled()">Add trip</button>
+      </div>
+      <div class="sc-note" id="sched-add-note"></div>
+    </div>
+
+    <div class="sc-sec">
+      <span class="mono-label">Calendar</span>
+      <div class="sc-note">Paste the secret iCal URL from Google, Apple or Outlook. Read-only, and it stays on the server.</div>
+      <input id="sched-ics" class="sc-input" placeholder="https://calendar.google.com/.../basic.ics" />
+      <button class="sc-btn" id="sched-connect" onclick="connectCalendar()">Connect calendar</button>
+      <div class="sc-note" id="sched-cal-note"></div>
+    </div>
+
+    <div class="sc-sec">
+      <span class="mono-label">Alert email</span>
+      <div class="sc-note">Where the pre-trip alert goes when the app is closed.</div>
+      <input id="sched-email" class="sc-input" type="email" placeholder="you@example.com" />
+      <button class="sc-btn" onclick="saveAlertEmail()">Save email</button>
+      <div class="sc-note" id="sched-email-note"></div>
+    </div>
   </div>
 
   <!-- Area feed panel -->
@@ -1264,6 +1341,180 @@
     }
 
     function toggleAlerts() { document.getElementById("alert-panel").classList.toggle("open"); }
+
+    // ---- Scheduler ----------------------------------------------------
+    // Scheduled trips live on the server, not in localStorage: the nightly
+    // alert job has to read them while this page is closed.
+    const SCHED_DAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+    let schedDays = new Set();
+
+    function renderDayPicker() {
+      const wrap = document.getElementById("sched-days");
+      wrap.innerHTML = SCHED_DAYS.map(d =>
+        `<div class="sc-day${schedDays.has(d) ? " on" : ""}" onclick="toggleSchedDay('${d}')">${d}</div>`).join("");
+    }
+
+    function toggleSchedDay(day) {
+      schedDays.has(day) ? schedDays.delete(day) : schedDays.add(day);
+      renderDayPicker();
+      // Repeating and a single calendar date are mutually exclusive.
+      document.getElementById("sched-date").disabled = schedDays.size > 0;
+    }
+
+    async function toggleSchedule() {
+      const panel = document.getElementById("sched-panel");
+      const opening = !panel.classList.contains("open");
+      panel.classList.remove("open");
+      document.getElementById("feed-panel").classList.remove("open");
+      document.getElementById("alert-panel").classList.remove("open");
+      if (!opening) return;
+      panel.classList.add("open");
+      renderDayPicker();
+      await refreshSchedule();
+    }
+
+    async function refreshSchedule() {
+      let data;
+      try {
+        data = await (await fetch("/api/schedule")).json();
+      } catch {
+        document.getElementById("sched-list").innerHTML =
+          '<div class="alert-empty">Schedule unavailable.</div>';
+        return;
+      }
+      renderScheduleList(data.trips || []);
+
+      const cal = data.calendar || {};
+      document.getElementById("sched-connect").textContent =
+        cal.connected ? "Re-sync calendar" : "Connect calendar";
+      const calNote = document.getElementById("sched-cal-note");
+      calNote.className = "sc-note";
+      calNote.textContent = cal.connected ? `Connected to ${cal.hint || "a calendar"}.` : "";
+      if (data.alert_email) document.getElementById("sched-email").value = data.alert_email;
+
+      // Adding needs somewhere to go — the destination currently on the map.
+      const canAdd = !!currentDest;
+      document.getElementById("sched-add").disabled = !canAdd;
+      const addNote = document.getElementById("sched-add-note");
+      addNote.className = "sc-note";
+      addNote.textContent = canAdd
+        ? `Destination: ${currentDest.name}`
+        : "Search for a destination first, then add it here.";
+    }
+
+    function renderScheduleList(trips) {
+      const list = document.getElementById("sched-list");
+      if (!trips.length) {
+        list.innerHTML = '<div class="alert-empty">Nothing scheduled yet.</div>';
+        return;
+      }
+      list.innerHTML = trips.map(t => `
+        <div class="sc-row">
+          <span class="nm">${escapeHtml(t.label)}</span>
+          <span class="sc-tag">${t.source === "ics" ? "cal" : "manual"}</span>
+          <span class="when">${formatWhen(t.next_at)}</span>
+          <button class="sc-del" title="Remove" onclick="deleteScheduled('${t.id}')">×</button>
+        </div>`).join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s || "").replace(/[&<>"']/g, c =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    function formatWhen(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (isNaN(d)) return iso;
+      return d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+    }
+
+    async function addScheduled() {
+      if (!currentDest) return;
+      const note = document.getElementById("sched-add-note");
+      const time = document.getElementById("sched-time").value || "08:30";
+      const date = document.getElementById("sched-date").value;
+      const body = {
+        label: document.getElementById("sched-label").value.trim() || currentDest.name,
+        destination: currentDest.name,
+        dest_lat: currentDest.lat, dest_lon: currentDest.lon,
+      };
+      if (schedDays.size) {
+        body.days = [...schedDays].join(",");
+        body.time_of_day = time;
+      } else if (date) {
+        body.arrive_at = `${date}T${time}`;
+      } else {
+        note.className = "sc-note err";
+        note.textContent = "Pick repeat days or a date.";
+        return;
+      }
+      const res = await fetch("/api/schedule", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        note.className = "sc-note err";
+        note.textContent = data.error || "Could not add that trip.";
+        return;
+      }
+      document.getElementById("sched-label").value = "";
+      schedDays.clear(); renderDayPicker();
+      document.getElementById("sched-date").disabled = false;
+      await refreshSchedule();
+      note.className = "sc-note ok";
+      note.textContent = "Added.";
+    }
+
+    async function deleteScheduled(id) {
+      await fetch(`/api/schedule/${id}`, { method: "DELETE" });
+      await refreshSchedule();
+    }
+
+    async function connectCalendar() {
+      const note = document.getElementById("sched-cal-note");
+      const btn = document.getElementById("sched-connect");
+      const url = document.getElementById("sched-ics").value.trim();
+      btn.disabled = true;
+      note.className = "sc-note";
+      note.textContent = url ? "Fetching calendar…" : "Syncing…";
+      try {
+        // With a URL this connects or replaces; empty re-syncs what is stored.
+        const res = url
+          ? await fetch("/api/schedule/calendar", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url }) })
+          : await fetch("/api/schedule/sync", { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) {
+          note.className = "sc-note err";
+          note.textContent = data.error || "Could not connect that calendar.";
+        } else {
+          const sync = data.sync || data;
+          note.className = "sc-note ok";
+          note.textContent = `Imported ${sync.imported || 0} trip(s)` +
+            (sync.skipped && sync.skipped.length ? `, ${sync.skipped.length} without a usable location` : "") + ".";
+          document.getElementById("sched-ics").value = "";
+        }
+      } catch {
+        note.className = "sc-note err";
+        note.textContent = "Could not reach the server.";
+      }
+      btn.disabled = false;
+      await refreshSchedule();
+    }
+
+    async function saveAlertEmail() {
+      const note = document.getElementById("sched-email-note");
+      const email = document.getElementById("sched-email").value.trim();
+      await fetch("/api/schedule/settings", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alert_email: email }),
+      });
+      note.className = "sc-note ok";
+      note.textContent = email ? "Saved." : "Cleared.";
+    }
 
     // ---- Civic/mobility events (SF 311) — the shared "what's happening" source ----
     let lastCivic = [];  // cache of the most recent fetch, reused by the feed

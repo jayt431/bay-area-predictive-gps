@@ -1,0 +1,34 @@
+# Nightly pre-trip alerts.
+#
+# Render's free tier has no cron jobs, so the schedule lives here. GitHub
+# Actions cron is free but not punctual: runs can be delayed 30+ minutes under
+# load, occasionally skipped, and are auto-disabled after 60 days with no
+# repository activity. That is acceptable for "tell me the night before" and
+# is not acceptable for anything time-critical — move to a paid scheduler if
+# the timing starts to matter.
+#
+# Setup: add two repository secrets (Settings -> Secrets and variables ->
+# Actions): APP_URL, e.g. https://bay-area-predictive-gps.onrender.com, and
+# CRON_SECRET, matching the env var of the same name on Render.
+name: Trip alerts
+
+on:
+  schedule:
+    - cron: "0 2 * * *"      # 02:00 UTC = 19:00 Pacific, the evening before
+  workflow_dispatch:          # also runnable by hand from the Actions tab
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the service
+        # A free Render service spins down after 15 minutes idle and takes
+        # about a minute to wake, so the first request is given room to fail.
+        continue-on-error: true
+        run: curl -fsS --max-time 180 "${{ secrets.APP_URL }}/api/health" || true
+
+      - name: Send pre-trip alerts
+        run: |
+          curl -fsS --max-time 300 --retry 3 --retry-delay 20 \
+            -X POST "${{ secrets.APP_URL }}/api/alerts/run?within_hours=24" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}"

@@ -28,6 +28,13 @@ Env vars:
 - `NEWSAPI_KEY` — live Bay Area news (free developer tier)
 - `TRAFFIC_511_TOKEN` — live 511 SF Bay traffic events; without it the
   disruption pool falls back to the mock list in `mock_data._DISRUPTIONS`
+- `DATABASE_URL` — Postgres for the scheduler. Absent, it uses a local SQLite
+  file (`SCHEDULE_DB_PATH`, default `schedule.db`), so the scheduler runs
+  locally with no signup
+- `RESEND_API_KEY` / `ALERT_FROM_EMAIL` — sends the pre-trip alert email;
+  without a key the alert is computed and reported, not sent
+- `CRON_SECRET` — required in the `X-Cron-Secret` header on
+  `POST /api/alerts/run` when set
 
 Every source degrades gracefully; a missing key downgrades one feature, never
 breaks the app. **After each meaningful change: commit + push** (backs up to
@@ -48,6 +55,13 @@ Endpoints:
 | `GET /api/disruptions` | Bay Area disruption pool. Live 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else mocked |
 | `GET /api/parking?lat&lon` | Mocked parking zones (legacy; UI now uses meters) |
 | `GET /api/meters?lat&lon` | **Real** SF metered streets (DataSF), grouped by street |
+| `GET /api/schedule` | Upcoming trips, calendar status, alert email |
+| `POST /api/schedule` | Add a manual trip (one-off `arrive_at`, or `days` + `time_of_day`) |
+| `DELETE /api/schedule/<id>` | Remove a trip |
+| `POST /api/schedule/calendar` | Connect an .ics feed and sync; `url: null` disconnects and clears its trips |
+| `POST /api/schedule/sync` | Re-sync the connected calendar |
+| `POST /api/schedule/settings` | Set the alert email |
+| `POST /api/alerts/run` | Brief every trip starting soon and email it. `?dry_run=1` returns the emails instead of sending |
 | `POST /api/brief` | Pre-trip alert. Claude when `ANTHROPIC_API_KEY` set, else rule-based `_fallback_brief` |
 | `GET /map-test` | Standalone Mapbox pin test (persona data) |
 
@@ -73,6 +87,54 @@ relevance is left entirely to the model — the prompt hands it raw headlines an
 says most will be irrelevant. The rule-based fallback uses only the structured
 weather alerts (rain likely, strong wind) and ignores headlines, because
 relevance is a judgment it cannot make.
+
+## The scheduler
+
+Three files, added when the scheduler arrived because a background job must
+read the schedule while the browser is closed — the database trigger this doc
+predicted:
+
+| File | Role |
+|------|------|
+| `store.py` | Persistence. Postgres via `DATABASE_URL`, else SQLite. Rows carry a `user_id` (currently `'local'`) so multi-user is a migration, not a rewrite |
+| `calendar_sync.py` | Fetches and parses .ics feeds, expands RRULE, geocodes locations |
+| `scheduler.py` | Calendar import and "what trips are coming up" |
+| `alerts.py` | Routes and briefs a trip server-side, then emails it |
+
+**Calendar sync is over secret .ics URLs, not OAuth.** Google, Apple and
+Outlook all publish one, so a single parser covers every provider with no
+consent screen, no client secret and no accounts. The trade-offs are real and
+worth re-reading before anyone proposes "just add Google login": the feed is
+read-only, the URL is a bearer credential (kept server-side and never returned
+to the browser), and Google caches its ICS output so edits can take hours to
+appear. OAuth is the answer when that lag matters.
+
+**Imports refuse weak geocodes.** Mapbox always returns something: without a
+bbox, "zzzqqq not a real place" resolves to a village in Poland, and venue
+names land on similar-sounding streets ("Chase Center" → "Chase Court,
+Fremont", relevance 0.65) because v5 geocoding has thin POI coverage. The map's
+search box hides this by showing five suggestions for a human to choose from;
+an unattended import cannot, so anything below `GEOCODE_MIN_RELEVANCE` (0.8) is
+skipped and reported rather than guessed. In practice calendar events need a
+street address, not just a venue name.
+
+Every sync re-geocodes instead of trusting stored coordinates — reusing them
+made a bad match permanent. Within one run, lookups are deduped by location
+string, so a recurring meeting costs one call, not one per occurrence.
+
+**Alerts run without a browser.** `alerts.build_context()` does server-side
+what the map does client-side — Mapbox Directions for the route,
+point-to-polyline distance for disruption matching at the same 0.5/2 km
+thresholds — then hands the result to `app.compute_brief()`, the same function
+`POST /api/brief` uses, so an emailed alert and the on-screen one always agree.
+Each occurrence is alerted once; the send is recorded per trip and start time,
+so a cron that retries does not email twice.
+
+**Scheduling the job.** Render's free tier has no cron, so
+`.github/workflows/trip-alerts.yml` calls `POST /api/alerts/run` nightly.
+GitHub Actions cron is free but imprecise — delayed under load, sometimes
+skipped, and auto-disabled after 60 days without repo activity. Fine for "the
+night before", not for anything time-critical.
 
 ## 511 SF Bay (the disruption pool)
 
