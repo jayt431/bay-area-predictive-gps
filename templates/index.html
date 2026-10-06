@@ -365,7 +365,17 @@
   <!-- Scheduler panel -->
   <div id="sched-panel" class="glass">
     <div class="sc-head"><span class="mono-label">Scheduled trips</span></div>
-    <div class="sc-sec"><div id="sched-list"></div></div>
+
+    <div class="sc-sec" id="sched-lock" hidden>
+      <div class="sc-note">This schedule is private. Enter the passcode to view it.</div>
+      <input id="sched-passcode" class="sc-input" type="password" placeholder="Passcode"
+             onkeydown="if(event.key==='Enter')unlockSchedule()" />
+      <button class="sc-btn" onclick="unlockSchedule()">Unlock</button>
+      <div class="sc-note" id="sched-lock-note"></div>
+    </div>
+
+    <div id="sched-main">
+      <div class="sc-sec"><div id="sched-list"></div></div>
 
     <div class="sc-sec">
       <span class="mono-label">Add this destination</span>
@@ -394,6 +404,7 @@
       <input id="sched-email" class="sc-input" type="email" placeholder="you@example.com" />
       <button class="sc-btn" onclick="saveAlertEmail()">Save email</button>
       <div class="sc-note" id="sched-email-note"></div>
+      </div>
     </div>
   </div>
 
@@ -1346,7 +1357,59 @@
     // Scheduled trips live on the server, not in localStorage: the nightly
     // alert job has to read them while this page is closed.
     const SCHED_DAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+    const PASSCODE_KEY = "bapg_passcode";
     let schedDays = new Set();
+
+    // The passcode rides in a custom header rather than a cookie: a custom
+    // header cannot be sent cross-origin without CORS, so there is no CSRF
+    // surface and no session state on the server.
+    function schedHeaders(extra) {
+      const headers = Object.assign({}, extra || {});
+      let code = null;
+      try { code = localStorage.getItem(PASSCODE_KEY); } catch {}
+      if (code) headers["X-Schedule-Passcode"] = code;
+      return headers;
+    }
+
+    async function schedFetch(url, options) {
+      const opts = Object.assign({}, options || {});
+      opts.headers = schedHeaders(opts.headers);
+      const res = await fetch(url, opts);
+      if (res.status === 401) showLock("");         // stale or missing passcode
+      else if (res.status === 429) showLock("Too many attempts. Wait a few minutes.");
+      return res;
+    }
+
+    function showLock(message) {
+      document.getElementById("sched-lock").hidden = false;
+      document.getElementById("sched-main").hidden = true;
+      const note = document.getElementById("sched-lock-note");
+      note.className = message ? "sc-note err" : "sc-note";
+      note.textContent = message || "";
+    }
+
+    function hideLock() {
+      document.getElementById("sched-lock").hidden = true;
+      document.getElementById("sched-main").hidden = false;
+    }
+
+    async function unlockSchedule() {
+      const field = document.getElementById("sched-passcode");
+      const code = field.value.trim();
+      if (!code) return;
+      const res = await fetch("/api/schedule/unlock", {
+        method: "POST", headers: { "X-Schedule-Passcode": code },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showLock(data.error || "Incorrect passcode.");
+        return;
+      }
+      try { localStorage.setItem(PASSCODE_KEY, code); } catch {}
+      field.value = "";
+      hideLock();
+      await refreshSchedule();
+    }
 
     function renderDayPicker() {
       const wrap = document.getElementById("sched-days");
@@ -1376,12 +1439,15 @@
     async function refreshSchedule() {
       let data;
       try {
-        data = await (await fetch("/api/schedule")).json();
+        const res = await schedFetch("/api/schedule");
+        if (res.status === 401 || res.status === 429) return;
+        data = await res.json();
       } catch {
         document.getElementById("sched-list").innerHTML =
           '<div class="alert-empty">Schedule unavailable.</div>';
         return;
       }
+      hideLock();
       renderScheduleList(data.trips || []);
 
       const cal = data.calendar || {};
@@ -1449,7 +1515,7 @@
         note.textContent = "Pick repeat days or a date.";
         return;
       }
-      const res = await fetch("/api/schedule", {
+      const res = await schedFetch("/api/schedule", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -1468,7 +1534,7 @@
     }
 
     async function deleteScheduled(id) {
-      await fetch(`/api/schedule/${id}`, { method: "DELETE" });
+      await schedFetch(`/api/schedule/${id}`, { method: "DELETE" });
       await refreshSchedule();
     }
 
@@ -1482,10 +1548,10 @@
       try {
         // With a URL this connects or replaces; empty re-syncs what is stored.
         const res = url
-          ? await fetch("/api/schedule/calendar", {
+          ? await schedFetch("/api/schedule/calendar", {
               method: "POST", headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ url }) })
-          : await fetch("/api/schedule/sync", { method: "POST" });
+          : await schedFetch("/api/schedule/sync", { method: "POST" });
         const data = await res.json();
         if (!res.ok) {
           note.className = "sc-note err";
@@ -1508,7 +1574,7 @@
     async function saveAlertEmail() {
       const note = document.getElementById("sched-email-note");
       const email = document.getElementById("sched-email").value.trim();
-      await fetch("/api/schedule/settings", {
+      await schedFetch("/api/schedule/settings", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ alert_email: email }),
       });

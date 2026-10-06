@@ -35,6 +35,9 @@ Env vars:
   without a key the alert is computed and reported, not sent
 - `CRON_SECRET` — required in the `X-Cron-Secret` header on
   `POST /api/alerts/run` when set
+- `SCHEDULE_PASSCODE` — gates the scheduler endpoints. **Unset means open**,
+  which keeps local development frictionless and makes setting it in production
+  mandatory
 
 Every source degrades gracefully; a missing key downgrades one feature, never
 breaks the app. **After each meaningful change: commit + push** (backs up to
@@ -61,6 +64,7 @@ Endpoints:
 | `POST /api/schedule/calendar` | Connect an .ics feed and sync; `url: null` disconnects and clears its trips |
 | `POST /api/schedule/sync` | Re-sync the connected calendar |
 | `POST /api/schedule/settings` | Set the alert email |
+| `POST /api/schedule/unlock` | Validate a passcode without changing anything |
 | `POST /api/alerts/run` | Brief every trip starting soon and email it. `?dry_run=1` returns the emails instead of sending |
 | `POST /api/brief` | Pre-trip alert. Claude when `ANTHROPIC_API_KEY` set, else rule-based `_fallback_brief` |
 | `GET /map-test` | Standalone Mapbox pin test (persona data) |
@@ -100,6 +104,22 @@ predicted:
 | `calendar_sync.py` | Fetches and parses .ics feeds, expands RRULE, geocodes locations |
 | `scheduler.py` | Calendar import and "what trips are coming up" |
 | `alerts.py` | Routes and briefs a trip server-side, then emails it |
+
+**The schedule is gated, the map is not.** The map is a public demo; the
+schedule is personal — where you go and when. So `requires_passcode` sits on
+the six `/api/schedule*` endpoints only, and `/`, `/api/config`,
+`/api/disruptions` and the rest stay open.
+
+One shared passcode, no accounts: there is one user, and a login system would
+be more surface than the thing it protects. The passcode travels in an
+`X-Schedule-Passcode` header, which cannot be sent cross-origin without CORS,
+so there is no CSRF surface and no server-side session. The browser keeps it in
+`localStorage`; a 401 re-shows the lock panel. Ten wrong attempts from one IP
+start a 15-minute cooldown, because a short shared secret is otherwise
+guessable — the cooldown rejects the correct passcode too, by design.
+
+`POST /api/alerts/run` accepts either `CRON_SECRET` (for the nightly job) or
+the passcode (so a run can be triggered by hand from the UI).
 
 **One connection per request.** `store.connection()` reuses a thread-local
 connection for the length of a request (`before_request`/`teardown_request` in

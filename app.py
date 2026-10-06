@@ -14,10 +14,13 @@ alert. Without it, returns the raw tool data so the app is always demoable.
 
 from __future__ import annotations
 
+import hmac
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from functools import wraps
 
 from flask import Flask, jsonify, render_template, request
 
@@ -309,10 +312,102 @@ def _fallback_brief(ctx: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Scheduler access
+#
+# The map is a public demo; the schedule is personal — where you go and when.
+# So the gate sits on the scheduler endpoints only, and the map stays open.
+#
+# One shared passcode, no accounts: there is one user, and a login system would
+# be more surface than the thing it protects. The passcode travels in a custom
+# header, which cannot be sent cross-origin without CORS, so this needs no CSRF
+# token. With `SCHEDULE_PASSCODE` unset the endpoints stay open, which keeps
+# local development frictionless — it must therefore be set in production.
+# ---------------------------------------------------------------------------
+
+PASSCODE_HEADER = "X-Schedule-Passcode"
+_MAX_FAILURES = 10
+_FAILURE_WINDOW_S = 900          # 15 minutes
+_failures: dict[str, list] = {}  # ip -> [count, window_started_at]
+
+
+def _schedule_passcode() -> str:
+    # Read per call rather than at import, so tests and a restart pick up a change.
+    return os.environ.get("SCHEDULE_PASSCODE", "")
+
+
+def _client_ip() -> str:
+    # Render sits behind a proxy, so the real client is first in the chain.
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    return (forwarded.split(",")[0].strip() if forwarded else request.remote_addr) or "unknown"
+
+
+def _throttled(ip: str) -> bool:
+    """A short shared passcode is guessable without a limit on attempts."""
+    entry = _failures.get(ip)
+    if not entry:
+        return False
+    count, started = entry
+    if time.time() - started > _FAILURE_WINDOW_S:
+        _failures.pop(ip, None)
+        return False
+    return count >= _MAX_FAILURES
+
+
+def _record_failure(ip: str) -> None:
+    entry = _failures.get(ip)
+    if not entry or time.time() - entry[1] > _FAILURE_WINDOW_S:
+        _failures[ip] = [1, time.time()]
+    else:
+        entry[0] += 1
+
+
+def _passcode_ok() -> bool:
+    expected = _schedule_passcode()
+    if not expected:
+        return True
+    supplied = request.headers.get(PASSCODE_HEADER, "")
+    return bool(supplied) and hmac.compare_digest(supplied, expected)
+
+
+def requires_passcode(view):
+    """Gate a scheduler endpoint behind the shared passcode."""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if not _schedule_passcode():
+            return view(*args, **kwargs)
+        ip = _client_ip()
+        if _throttled(ip):
+            return jsonify({"error": "too many attempts; try again later"}), 429
+        if not _passcode_ok():
+            _record_failure(ip)
+            # `locked` tells the UI to ask for the passcode rather than show an error.
+            return jsonify({"error": "locked", "locked": True}), 401
+        _failures.pop(ip, None)
+        return view(*args, **kwargs)
+    return wrapper
+
+
+@app.route("/api/schedule/unlock", methods=["POST"])
+def unlock_schedule():
+    """Check a passcode without changing anything, so the UI can validate it."""
+    if not _schedule_passcode():
+        return jsonify({"unlocked": True, "required": False})
+    ip = _client_ip()
+    if _throttled(ip):
+        return jsonify({"error": "too many attempts; try again later"}), 429
+    if not _passcode_ok():
+        _record_failure(ip)
+        return jsonify({"error": "incorrect passcode", "locked": True}), 401
+    _failures.pop(ip, None)
+    return jsonify({"unlocked": True, "required": True})
+
+
+# ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
 
 @app.route("/api/schedule")
+@requires_passcode
 def get_schedule():
     """Everything the scheduler panel needs in one call."""
     url = store.get_setting(scheduler.ICS_URL_KEY)
@@ -329,6 +424,7 @@ def get_schedule():
 
 
 @app.route("/api/schedule", methods=["POST"])
+@requires_passcode
 def add_schedule():
     """Add a manual trip: either a one-off `arrive_at` or `days` + `time_of_day`."""
     body = request.get_json(silent=True) or {}
@@ -352,11 +448,13 @@ def add_schedule():
 
 
 @app.route("/api/schedule/<trip_id>", methods=["DELETE"])
+@requires_passcode
 def remove_schedule(trip_id):
     return jsonify({"deleted": store.delete_trip(trip_id)})
 
 
 @app.route("/api/schedule/calendar", methods=["POST"])
+@requires_passcode
 def connect_calendar():
     """Connect, re-sync, or disconnect an .ics feed.
 
@@ -380,12 +478,14 @@ def connect_calendar():
 
 
 @app.route("/api/schedule/sync", methods=["POST"])
+@requires_passcode
 def sync_calendar_now():
     result = scheduler.sync_calendar()
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
 @app.route("/api/schedule/settings", methods=["POST"])
+@requires_passcode
 def schedule_settings():
     body = request.get_json(silent=True) or {}
     if "alert_email" in body:
@@ -403,8 +503,11 @@ def run_alerts():
     (or retries) does not email twice.
     """
     secret = os.environ.get("CRON_SECRET")
-    if secret and request.headers.get("X-Cron-Secret") != secret:
-        return jsonify({"error": "unauthorized"}), 401
+    if secret:
+        from_cron = hmac.compare_digest(request.headers.get("X-Cron-Secret", ""), secret)
+        # The passcode also opens this, so the UI can trigger a run by hand.
+        if not (from_cron or (_schedule_passcode() and _passcode_ok())):
+            return jsonify({"error": "unauthorized"}), 401
 
     hours = request.args.get("within_hours", 24, type=float)
     dry_run = request.args.get("dry_run", "").lower() in ("1", "true", "yes")
