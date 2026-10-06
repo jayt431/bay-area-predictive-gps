@@ -34,8 +34,13 @@ CREATE TABLE IF NOT EXISTS scheduled_trips (
     user_id      TEXT NOT NULL,
     label        TEXT NOT NULL,
     destination  TEXT NOT NULL,
-    dest_lat     REAL NOT NULL,
-    dest_lon     REAL NOT NULL,
+    -- DOUBLE PRECISION, not REAL: Postgres REAL is a 4-byte float with about
+    -- six significant digits, which silently rounds -122.3937 to -122.394 —
+    -- some 30 m of error feeding 500 m severity thresholds and a 350 m parking
+    -- radius. SQLite's REAL is already 8-byte, so this only bit on Postgres.
+    -- SQLite accepts the same type name (REAL affinity), so one schema serves both.
+    dest_lat     DOUBLE PRECISION NOT NULL,
+    dest_lon     DOUBLE PRECISION NOT NULL,
     arrive_at    TEXT,
     days         TEXT,
     time_of_day  TEXT,
@@ -145,6 +150,32 @@ def init_db() -> None:
         cur.execute(_SCHEMA)
         cur.execute(_SETTINGS_SCHEMA)
         conn.commit()
+        _widen_coordinate_columns(cur, conn)
+
+
+def _widen_coordinate_columns(cur, conn) -> None:
+    """Migrate coordinates created as Postgres REAL up to DOUBLE PRECISION.
+
+    Tables created before the type was corrected hold 4-byte floats. Widening
+    cannot recover the digits already lost, so affected rows need re-saving —
+    calendar trips fix themselves on the next sync.
+    """
+    if not using_postgres():
+        return
+    try:
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'scheduled_trips' "
+            "AND column_name IN ('dest_lat', 'dest_lon') AND data_type = 'real'"
+        )
+        stale = [row[0] for row in cur.fetchall()]
+        for column in stale:
+            cur.execute(f"ALTER TABLE scheduled_trips "
+                        f"ALTER COLUMN {column} TYPE DOUBLE PRECISION")
+        if stale:
+            conn.commit()
+    except Exception:
+        _safe_rollback(conn)   # a failed migration must not block startup
 
 
 _COLUMNS = ["id", "user_id", "label", "destination", "dest_lat", "dest_lon",
