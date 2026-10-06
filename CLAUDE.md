@@ -96,10 +96,19 @@ predicted:
 
 | File | Role |
 |------|------|
-| `store.py` | Persistence. Postgres via `DATABASE_URL`, else SQLite. Rows carry a `user_id` (currently `'local'`) so multi-user is a migration, not a rewrite |
+| `store.py` | Persistence. Postgres via `DATABASE_URL`, else SQLite. Rows carry a `user_id` (currently `'local'`) so multi-user is a migration, not a rewrite. One connection per request, not per call — see below |
 | `calendar_sync.py` | Fetches and parses .ics feeds, expands RRULE, geocodes locations |
 | `scheduler.py` | Calendar import and "what trips are coming up" |
 | `alerts.py` | Routes and briefs a trip server-side, then emails it |
+
+**One connection per request.** `store.connection()` reuses a thread-local
+connection for the length of a request (`before_request`/`teardown_request` in
+`app.py`), opening one lazily on first use. Per-call connections cost nothing
+against a local SQLite file — which is what this was first tested on — but
+against a remote Postgres each one is a fresh TCP and TLS handshake, and
+`GET /api/schedule` alone makes four calls. Outside a request scope (CLI, the
+sync job, tests) it falls back to a short-lived connection, so no caller needs
+to know whether a scope exists.
 
 **Calendar sync is over secret .ics URLs, not OAuth.** Google, Apple and
 Outlook all publish one, so a single parser covers every provider with no

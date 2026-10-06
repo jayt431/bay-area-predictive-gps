@@ -34,6 +34,18 @@ app = Flask(__name__)
 store.init_db()
 
 
+@app.before_request
+def _open_db_scope():
+    """One database connection per request instead of one per call. Lazy, so
+    the many endpoints that never touch the database open nothing."""
+    store.begin_scope()
+
+
+@app.teardown_request
+def _close_db_scope(exc=None):
+    store.end_scope()
+
+
 @app.route("/")
 def index():
     return render_template("index.html", mapbox_token=os.environ.get("MAPBOX_TOKEN", ""))

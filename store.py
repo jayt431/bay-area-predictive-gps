@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 
 DB_URL = os.environ.get("DATABASE_URL", "")
@@ -63,7 +65,7 @@ def _q(sql: str) -> str:
     return sql.replace("?", "%s") if using_postgres() else sql
 
 
-def _connect():
+def _new_connection():
     if using_postgres():
         import psycopg2  # imported lazily so local dev needs no driver
         return psycopg2.connect(DB_URL)
@@ -72,8 +74,73 @@ def _connect():
     return conn
 
 
+# One connection per scope, not per call.
+#
+# Opening a connection costs nothing against a local SQLite file, which is what
+# this was first written and tested against. Against a remote Postgres it is a
+# fresh TCP and TLS handshake every time, and a single request here makes
+# several calls — GET /api/schedule alone reads two settings and two trip
+# lists. Those become one connection instead of four.
+#
+# The scope is opened and closed per web request (see app.py). Outside one — the
+# CLI, a test, the sync job — `connection()` falls back to a short-lived
+# connection, so nothing has to know whether a scope exists. Thread-local, so
+# concurrent requests never share a connection.
+_local = threading.local()
+
+
+@contextmanager
+def connection():
+    scope = getattr(_local, "scope", None)
+    if scope is None:
+        conn = _new_connection()
+        try:
+            yield conn
+        except Exception:
+            _safe_rollback(conn)
+            raise
+        finally:
+            conn.close()
+        return
+
+    # Inside a scope: create on first use, then reuse and leave open.
+    if scope.get("conn") is None:
+        scope["conn"] = _new_connection()
+    try:
+        yield scope["conn"]
+    except Exception:
+        _safe_rollback(scope["conn"])
+        raise
+
+
+def _safe_rollback(conn) -> None:
+    """A failed statement must not leave a half-open transaction behind for the
+    next caller in the same scope."""
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+
+def begin_scope() -> None:
+    """Start a connection scope. Lazy: no connection is opened until one is
+    actually needed, so requests that never touch the database pay nothing."""
+    _local.scope = {"conn": None}
+
+
+def end_scope() -> None:
+    """Close the scope's connection, if one was ever opened."""
+    scope = getattr(_local, "scope", None)
+    _local.scope = None
+    if scope and scope.get("conn") is not None:
+        try:
+            scope["conn"].close()
+        except Exception:
+            pass
+
+
 def init_db() -> None:
-    with _connect() as conn:
+    with connection() as conn:
         cur = conn.cursor()
         cur.execute(_SCHEMA)
         cur.execute(_SETTINGS_SCHEMA)
@@ -97,7 +164,7 @@ def list_trips(user_id: str = LOCAL_USER, include_disabled: bool = True) -> list
     if not include_disabled:
         sql += " AND enabled = 1"
     sql += " ORDER BY time_of_day, arrive_at"
-    with _connect() as conn:
+    with connection() as conn:
         cur = conn.cursor()
         cur.execute(_q(sql), (user_id,))
         return [_row_to_trip(r) for r in cur.fetchall()]
@@ -126,7 +193,7 @@ def save_trip(trip: dict, user_id: str = LOCAL_USER) -> dict:
         "created_at": (existing or {}).get("created_at") or datetime.utcnow().isoformat(timespec="seconds"),
     }
 
-    with _connect() as conn:
+    with connection() as conn:
         cur = conn.cursor()
         cur.execute(_q("DELETE FROM scheduled_trips WHERE id = ? AND user_id = ?"),
                     (record["id"], user_id))
@@ -141,7 +208,7 @@ def save_trip(trip: dict, user_id: str = LOCAL_USER) -> dict:
 
 
 def _find_by_external_id(external_id: str, user_id: str) -> dict | None:
-    with _connect() as conn:
+    with connection() as conn:
         cur = conn.cursor()
         cur.execute(_q(f"SELECT {', '.join(_COLUMNS)} FROM scheduled_trips "
                        f"WHERE external_id = ? AND user_id = ?"), (external_id, user_id))
@@ -150,7 +217,7 @@ def _find_by_external_id(external_id: str, user_id: str) -> dict | None:
 
 
 def delete_trip(trip_id: str, user_id: str = LOCAL_USER) -> bool:
-    with _connect() as conn:
+    with connection() as conn:
         cur = conn.cursor()
         cur.execute(_q("DELETE FROM scheduled_trips WHERE id = ? AND user_id = ?"),
                     (trip_id, user_id))
@@ -160,7 +227,7 @@ def delete_trip(trip_id: str, user_id: str = LOCAL_USER) -> bool:
 
 def delete_by_source(source: str, user_id: str = LOCAL_USER) -> int:
     """Clear one source's trips — used to reconcile a calendar re-import."""
-    with _connect() as conn:
+    with connection() as conn:
         cur = conn.cursor()
         cur.execute(_q("DELETE FROM scheduled_trips WHERE source = ? AND user_id = ?"),
                     (source, user_id))
@@ -169,7 +236,7 @@ def delete_by_source(source: str, user_id: str = LOCAL_USER) -> int:
 
 
 def get_setting(key: str, user_id: str = LOCAL_USER) -> str | None:
-    with _connect() as conn:
+    with connection() as conn:
         cur = conn.cursor()
         cur.execute(_q("SELECT value FROM settings WHERE user_id = ? AND key = ?"),
                     (user_id, key))
@@ -178,7 +245,7 @@ def get_setting(key: str, user_id: str = LOCAL_USER) -> str | None:
 
 
 def set_setting(key: str, value: str | None, user_id: str = LOCAL_USER) -> None:
-    with _connect() as conn:
+    with connection() as conn:
         cur = conn.cursor()
         cur.execute(_q("DELETE FROM settings WHERE user_id = ? AND key = ?"), (user_id, key))
         if value is not None:
