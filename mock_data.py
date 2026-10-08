@@ -273,6 +273,10 @@ _511_TTL_SECONDS = 120
 # before the cut, so trimming drops the least consequential events.
 _511_MAX_EVENTS = 250
 _511_CACHE: dict = {"at": 0.0, "events": None}
+# Why the last fetch failed, surfaced by GET /api/disruptions. Without this the
+# fallback to the mock pool is completely silent: a bad token on the server
+# looks identical to a working one, and the map shows invented events.
+_511_LAST_ERROR: str | None = None
 
 # Open511 event_type -> the vocabulary the UI already speaks.
 _511_TYPES = {
@@ -396,10 +400,23 @@ def _511_note(event: dict) -> str:
     return f"Reported on {road}."
 
 
+def _redact(text: str, secret: str) -> str:
+    """511 echoes the api_key back inside error URLs, so scrub it before this
+    reaches a response body or a log."""
+    message = str(text)
+    return message.replace(secret, "<token>") if secret else message
+
+
+def last_511_error() -> str | None:
+    return _511_LAST_ERROR
+
+
 def _fetch_511_events() -> list[dict] | None:
     """One call for the whole region. Returns None when 511 can't answer."""
-    token = os.environ.get("TRAFFIC_511_TOKEN")
+    global _511_LAST_ERROR
+    token = (os.environ.get("TRAFFIC_511_TOKEN") or "").strip()
     if not token:
+        _511_LAST_ERROR = "TRAFFIC_511_TOKEN not set"
         return None
     try:
         resp = requests.get(
@@ -415,12 +432,15 @@ def _fetch_511_events() -> list[dict] | None:
         # The feed may carry a UTF-8 BOM, which json.loads rejects; utf-8-sig
         # strips it when present and is harmless when it isn't.
         data = json.loads(resp.content.decode("utf-8-sig"))
-    except Exception:
+    except Exception as exc:
+        _511_LAST_ERROR = _redact(f"{type(exc).__name__}: {exc}", token)
         return None
 
     events = data.get("events") if isinstance(data, dict) else data
     if not isinstance(events, list):
+        _511_LAST_ERROR = "unexpected response shape (no events list)"
         return None
+    _511_LAST_ERROR = None
 
     events.sort(key=lambda e: _511_SEVERITY_RANK.get(
         (e.get("severity") or "UNKNOWN").upper(), 3))
@@ -456,7 +476,9 @@ def get_disruptions() -> list[dict]:
     A failed fetch serves the last good response if one is cached, and the mock
     pool otherwise — a dead upstream degrades the feed, it never empties the map.
     """
-    if not os.environ.get("TRAFFIC_511_TOKEN"):
+    global _511_LAST_ERROR
+    if not (os.environ.get("TRAFFIC_511_TOKEN") or "").strip():
+        _511_LAST_ERROR = "TRAFFIC_511_TOKEN not set"
         return [dict(d) for d in _DISRUPTIONS]
 
     cached = _511_CACHE.get("events")

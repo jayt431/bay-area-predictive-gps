@@ -125,8 +125,18 @@ def config():
 @app.route("/api/disruptions")
 def disruptions():
     """The Bay Area pool of possible disruptions. The frontend matches these
-    against the drawn route and keeps only the ones that fall near it."""
-    return jsonify({"disruptions": mock_data.get_disruptions()})
+    against the drawn route and keeps only the ones that fall near it.
+
+    `source` and `note` make the fallback visible: a mocked pool with a note
+    explaining why is diagnosable, a mocked pool that looks real is not.
+    """
+    pool = mock_data.get_disruptions()
+    live = bool(pool) and pool[0].get("source") == "511.org"
+    return jsonify({
+        "disruptions": pool,
+        "source": "511.org" if live else "mock",
+        "note": None if live else mock_data.last_511_error(),
+    })
 
 
 @app.route("/api/parking")
