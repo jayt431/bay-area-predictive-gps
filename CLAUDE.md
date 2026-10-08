@@ -92,6 +92,43 @@ says most will be irrelevant. The rule-based fallback uses only the structured
 weather alerts (rain likely, strong wind) and ignores headlines, because
 relevance is a judgment it cannot make.
 
+## Where each secret has to be set
+
+Values live in a password manager, never here. This table is the map of
+**locations**, because the thing that actually breaks is rotating a value and
+missing one of the places it lives. Those failures are silent: a dead
+`TRAFFIC_511_TOKEN` in Render doesn't error, the disruption pool just quietly
+falls back to the mock list — the same shape of invisible outage as the DataSF
+domain migration, which left parking looking like a dead button for weeks.
+
+| Variable | `.env` (local) | Render (prod) | Elsewhere |
+|----------|----------------|---------------|-----------|
+| `MAPBOX_TOKEN` | yes | yes | URL restriction set in the Mapbox dashboard |
+| `OPENWEATHER_API_KEY` | yes | yes | — |
+| `NEWSAPI_KEY` | yes | yes | — |
+| `TRAFFIC_511_TOKEN` | yes | yes | — |
+| `DATABASE_URL` | normally commented out | yes | value comes from Supabase → Connect → **Session pooler** |
+| `SCHEDULE_PASSCODE` | no, on purpose | **yes — required** | the passcode typed into the Schedule panel |
+| `CRON_SECRET` | no | yes | **also** a GitHub Actions repo secret, must match |
+| `APP_URL` | no | no | GitHub Actions repo secret only |
+| `RESEND_API_KEY`, `ALERT_FROM_EMAIL` | no | yes | — |
+| `ANTHROPIC_API_KEY` | deliberately unset | deliberately unset | deferred on cost; the rule-based brief is the intended behaviour |
+
+Two deliberate asymmetries, both easy to mistake for mistakes:
+
+- **`SCHEDULE_PASSCODE` is unset locally** so development needs no passcode.
+  That is also why it is *mandatory* in production — unset means open.
+- **`DATABASE_URL` is commented out locally** so local runs use a SQLite file
+  instead of writing test data into the live Supabase database. Uncomment it
+  only to work against real data.
+
+Optional overrides with working defaults in code: `SCHEDULE_DB_PATH`,
+`GEOCODE_BBOX`, `GEOCODE_PROXIMITY`, `GEOCODE_COUNTRY`,
+`GEOCODE_MIN_RELEVANCE`.
+
+Git authentication is an SSH key (`~/.ssh/id_ed25519`), not a token, so no
+credential is stored in `.git/config`.
+
 ## The scheduler
 
 Three files, added when the scheduler arrived because a background job must
