@@ -56,11 +56,26 @@ def index():
 
 @app.route("/api/health")
 def health():
+    """Readiness at a glance: which sources are keyed, and whether the
+    scheduler is actually configured for production.
+
+    Booleans and a backend name only — never a value — so this stays safe to
+    curl from anywhere. It exists because "is DATABASE_URL set on the server?"
+    was otherwise unanswerable without opening the dashboard, and getting that
+    wrong means the schedule silently resets on every restart.
+    """
     return jsonify({
         "status": "ok",
         "anthropic_key": api_key_present(),
         "weather_key": bool(os.environ.get("OPENWEATHER_API_KEY")),
         "news_key": bool(os.environ.get("NEWSAPI_KEY")),
+        "traffic_511": bool(os.environ.get("TRAFFIC_511_TOKEN")),
+        # "sqlite" in production means scheduled trips vanish on restart.
+        "schedule_storage": "postgres" if store.using_postgres() else "sqlite",
+        # False in production means anyone can read and edit the schedule.
+        "schedule_locked": bool(os.environ.get("SCHEDULE_PASSCODE")),
+        "cron_protected": bool(os.environ.get("CRON_SECRET")),
+        "email_configured": bool(os.environ.get("RESEND_API_KEY")),
     })
 
 
