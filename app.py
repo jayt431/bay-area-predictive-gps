@@ -519,6 +519,21 @@ def schedule_settings():
     return jsonify({"alert_email": store.get_setting(scheduler.ALERT_EMAIL_KEY)})
 
 
+@app.route("/api/schedule/test-email", methods=["POST"])
+@requires_passcode
+def send_test_email():
+    """Send one fixed email to the alert address and report exactly what happened.
+
+    The nightly job only emails when a trip is due, so without this the first
+    sign that delivery is broken is an alert that never arrives.
+    """
+    email = store.get_setting(scheduler.ALERT_EMAIL_KEY)
+    delivery = alerts.send_email(
+        email, "Test alert from Bay Area Predictive GPS",
+        "This is a test. Pre-trip alerts for your scheduled trips will arrive at this address.")
+    return jsonify(delivery), (200 if delivery.get("sent") else 400)
+
+
 @app.route("/api/alerts/run", methods=["POST"])
 def run_alerts():
     """Brief every trip starting soon. Called by a scheduler, not a browser.

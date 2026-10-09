@@ -165,7 +165,15 @@ def send_email(to_address: str, subject: str, body: str) -> dict:
             json={"from": sender, "to": [to_address], "subject": subject, "text": body},
             timeout=20,
         )
-        resp.raise_for_status()
     except Exception as exc:
         return {"sent": False, "reason": f"send failed: {exc}"}
+    if not resp.ok:
+        # Resend explains a rejection in the body (unverified sender, a test
+        # sender writing to someone other than the account owner, a revoked
+        # key); the status code alone does not say which.
+        try:
+            detail = resp.json().get("message") or resp.text
+        except ValueError:
+            detail = resp.text
+        return {"sent": False, "reason": f"Resend rejected it ({resp.status_code}): {detail[:300]}"}
     return {"sent": True}

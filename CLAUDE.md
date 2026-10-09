@@ -95,6 +95,7 @@ Endpoints:
 | `POST /api/schedule/sync` | Re-sync the connected calendar |
 | `POST /api/schedule/settings` | Set the alert email |
 | `POST /api/schedule/unlock` | Validate a passcode without changing anything |
+| `POST /api/schedule/test-email` | Send one fixed email to the alert address and return Resend's exact result |
 | `POST /api/alerts/run` | Brief every trip starting soon and email it. `?dry_run=1` returns the emails instead of sending |
 | `POST /api/brief` | Pre-trip alert. Claude when `ANTHROPIC_API_KEY` set, else rule-based `_fallback_brief` |
 | `GET /map-test` | Standalone Mapbox pin test (persona data) |
@@ -141,7 +142,7 @@ domain migration, which left parking looking like a dead button for weeks.
 | `SCHEDULE_PASSCODE` | no, on purpose | **yes — required** | the passcode typed into the Schedule panel |
 | `CRON_SECRET` | no | yes | **also** a GitHub Actions repo secret, must match |
 | `APP_URL` | no | no | GitHub Actions repo secret only |
-| `RESEND_API_KEY`, `ALERT_FROM_EMAIL` | no | yes | — |
+| `RESEND_API_KEY`, `ALERT_FROM_EMAIL` | no | **not yet set** — `/api/health` reports `email_configured: false` | the Resend account; with the default `onboarding@resend.dev` sender it only delivers to the account owner's address |
 | `ANTHROPIC_API_KEY` | deliberately unset | deliberately unset | deferred on cost; the rule-based brief is the intended behaviour |
 
 Two deliberate asymmetries, both easy to mistake for mistakes:
@@ -174,7 +175,7 @@ predicted:
 
 **The schedule is gated, the map is not.** The map is a public demo; the
 schedule is personal — where you go and when. So `requires_passcode` sits on
-the six `/api/schedule*` endpoints only, and `/`, `/api/config`,
+the seven `/api/schedule*` endpoints only, and `/`, `/api/config`,
 `/api/disruptions` and the rest stay open.
 
 One shared passcode, no accounts: there is one user, and a login system would
@@ -238,7 +239,15 @@ so a cron that retries does not email twice.
 `.github/workflows/trip-alerts.yml` calls `POST /api/alerts/run` nightly.
 GitHub Actions cron is free but imprecise — delayed under load, sometimes
 skipped, and auto-disabled after 60 days without repo activity. Fine for "the
-night before", not for anything time-critical.
+night before", not for anything time-critical. The first runs on `0 2 * * *`
+started six and a half hours late (about 1:30 AM Pacific), so it now runs at
+`:23` past, off GitHub's busiest top-of-hour slot.
+
+`/api/alerts/run` answers 200 even when nothing was delivered, so the workflow
+counts deliveries itself and fails the run if any alert did not send — a green
+run used to mean only "the server answered". The repository is public and so
+are Actions logs: the step prints counts only, never the response body, which
+names trips and their times.
 
 ## 511 SF Bay (the disruption pool)
 

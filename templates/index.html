@@ -498,6 +498,7 @@
         <div class="sc-pair inline">
           <input id="sched-email" class="sc-input" type="email" placeholder="you@example.com" />
           <button class="conn-btn" onclick="saveAlertEmail()">Save</button>
+          <button class="conn-btn" onclick="sendTestEmail()">Test</button>
         </div>
         <div class="sc-note" id="sched-email-note"></div>
       </div>
@@ -1862,6 +1863,21 @@
       document.getElementById("cal-actions").hidden = true;
       document.getElementById("sched-cal-note").textContent = "";
       await refreshSchedule();
+    }
+
+    async function sendTestEmail() {
+      const note = document.getElementById("sched-email-note");
+      note.className = "sc-note";
+      note.textContent = "Sending…";
+      try {
+        const res = await schedFetch("/api/schedule/test-email", { method: "POST" });
+        const data = await res.json();
+        note.className = data.sent ? "sc-note ok" : "sc-note err";
+        note.textContent = data.sent ? "Sent. Check your inbox." : `Not sent: ${data.reason || "unknown error"}.`;
+      } catch {
+        note.className = "sc-note err";
+        note.textContent = "Could not reach the server.";
+      }
     }
 
     async function saveAlertEmail() {

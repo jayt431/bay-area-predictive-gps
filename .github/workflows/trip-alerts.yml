@@ -14,7 +14,10 @@ name: Trip alerts
 
 on:
   schedule:
-    - cron: "0 2 * * *"      # 02:00 UTC = 19:00 Pacific, the evening before
+    # 02:23 UTC = 19:23 Pacific, the evening before. Off the top of the hour,
+    # which GitHub says is its busiest and most delayed slot — the first runs
+    # on "0 2" started six and a half hours late.
+    - cron: "23 2 * * *"
   workflow_dispatch:          # also runnable by hand from the Actions tab
 
 jobs:
@@ -28,7 +31,21 @@ jobs:
         run: curl -fsS --max-time 180 "${{ secrets.APP_URL }}/api/health" || true
 
       - name: Send pre-trip alerts
+        # The endpoint answers 200 even when no email went out, so the run
+        # checks each delivery itself and fails if any did not send — that
+        # failure is what puts a red mark in the Actions tab.
+        #
+        # This repository is public and so are these logs: print counts only,
+        # never the response, which names trips and when they happen.
         run: |
-          curl -fsS --max-time 300 --retry 3 --retry-delay 20 \
+          response=$(curl -fsS --max-time 300 --retry 3 --retry-delay 20 \
             -X POST "${{ secrets.APP_URL }}/api/alerts/run?within_hours=24" \
-            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}"
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}")
+          sent=$(echo "$response" | jq '[.alerts[] | select(.delivery.sent == true)] | length')
+          skipped=$(echo "$response" | jq '[.alerts[] | select(.skipped)] | length')
+          failed=$(echo "$response" | jq '[.alerts[] | select(.error or (.delivery and .delivery.sent != true))] | length')
+          echo "sent=$sent already_alerted=$skipped failed=$failed"
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::$failed alert(s) were not delivered. Use Schedule -> Alert email -> Test in the app to see why."
+            exit 1
+          fi

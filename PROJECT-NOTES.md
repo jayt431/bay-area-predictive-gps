@@ -8,7 +8,7 @@ was diagnosed, and how to explain any of it to another person.
 Upload this file into a Claude conversation and ask questions about anything in
 it. It is meant to be talked through, not just read.
 
-**Last updated:** 2026-10-08 · **Live:** https://bay-area-predictive-gps.onrender.com ·
+**Last updated:** 2026-10-09 · **Live:** https://bay-area-predictive-gps.onrender.com ·
 **Repo:** github.com/jayt431/bay-area-predictive-gps
 
 ---
@@ -220,6 +220,23 @@ pasted into the host's dashboard. Worth sitting with — the bug was trivial, bu
 finding it was impossible until the system was made to say what was wrong. The
 diagnostic took longer to write than the fix, and that was the right trade.
 
+### Alert emails had never been sent, and every check said fine
+The docs listed the Resend key as set in production; `/api/health` said
+`email_configured: false`. So no alert had ever been delivered. Two other things
+hid it. The nightly job's last run was green, because the endpoint answers
+"OK" whether or not any email went out — green meant only "the server replied".
+And the job ran at about 1:30 AM, not 7 PM: GitHub started it six and a half
+hours late.
+
+**The fix, again, was making it loud:** a **Test** button next to the alert
+email sends one message and shows Resend's own reason if it fails ("API key is
+invalid", "you can only send to your own address"), and the nightly job now
+fails — a red mark in GitHub — whenever any alert does not send. It runs at 23
+minutes past the hour, off the slot GitHub is busiest in.
+
+One care point: the repository is public, so the job's logs are too. It prints
+counts only, never trip names or times.
+
 **The pattern across all of these:** every one was a *silent* failure. Nothing
 crashed. The app kept looking correct while serving wrong or fake data. Most of
 the real work was making failures announce themselves.
@@ -295,7 +312,8 @@ why.
 
 **Known open items:**
 
-- No email provider yet, so alerts compute but do not send
+- Email alerts need `RESEND_API_KEY` set on Render; until then they compute but
+  do not send (the Test button in the Schedule panel confirms it either way)
 - The nightly job is scheduled through GitHub Actions, which is free but
   imprecise, and auto-disables after 60 days without repository activity
 - Parking and civic events are San Francisco only; every Peninsula and East Bay
