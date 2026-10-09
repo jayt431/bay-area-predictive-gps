@@ -1447,7 +1447,16 @@
       document.getElementById("alert-panel").classList.toggle("show-minor");
     }
 
-    function toggleAlerts() { document.getElementById("alert-panel").classList.toggle("open"); }
+    // The three top-right panels share the same corner, so only one is open at a time.
+    const TOP_PANELS = ["alert-panel", "feed-panel", "sched-panel"];
+    function openOnlyPanel(id) {
+      const opening = !document.getElementById(id).classList.contains("open");
+      TOP_PANELS.forEach(p => document.getElementById(p).classList.remove("open"));
+      if (opening) document.getElementById(id).classList.add("open");
+      return opening;
+    }
+
+    function toggleAlerts() { openOnlyPanel("alert-panel"); }
 
     // ---- Scheduler ----------------------------------------------------
     // Scheduled trips live on the server, not in localStorage: the nightly
@@ -1716,13 +1725,7 @@
     function closeWhereSuggestions() { document.getElementById("where-sugg").classList.remove("open"); }
 
     async function toggleSchedule() {
-      const panel = document.getElementById("sched-panel");
-      const opening = !panel.classList.contains("open");
-      panel.classList.remove("open");
-      document.getElementById("feed-panel").classList.remove("open");
-      document.getElementById("alert-panel").classList.remove("open");
-      if (!opening) return;
-      panel.classList.add("open");
+      if (!openOnlyPanel("sched-panel")) return;
       if (!calCursor) {
         const now = new Date();
         calCursor = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1907,12 +1910,7 @@
 
     // View 2: the Area Feed — major events + drive-affecting closures near a place
     async function toggleFeed() {
-      const panel = document.getElementById("feed-panel");
-      const opening = !panel.classList.contains("open");
-      panel.classList.remove("open");
-      document.getElementById("alert-panel").classList.remove("open");
-      if (!opening) return;
-      panel.classList.add("open");
+      if (!openOnlyPanel("feed-panel")) return;
 
       const focus = currentDestPt || [home.lon, home.lat];
       const label = currentDest ? currentDest.name : home.label;
