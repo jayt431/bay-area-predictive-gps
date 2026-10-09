@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS scheduled_trips (
     source       TEXT NOT NULL,
     external_id  TEXT,
     enabled      INTEGER NOT NULL DEFAULT 1,
-    created_at   TEXT NOT NULL
+    created_at   TEXT NOT NULL,
+    mode         TEXT NOT NULL DEFAULT 'drive'
 )
 """
 
@@ -151,6 +152,26 @@ def init_db() -> None:
         cur.execute(_SETTINGS_SCHEMA)
         conn.commit()
         _widen_coordinate_columns(cur, conn)
+        _add_mode_column(cur, conn)
+
+
+def _add_mode_column(cur, conn) -> None:
+    """Add the travel-mode column to tables created before modes existed.
+
+    The default fills every existing row with 'drive', which is what they all
+    were. Both dialects accept this ALTER; it fails harmlessly when the column
+    is already there.
+    """
+    try:
+        cur.execute("SELECT mode FROM scheduled_trips WHERE 1 = 0")
+        return
+    except Exception:
+        _safe_rollback(conn)
+    try:
+        cur.execute("ALTER TABLE scheduled_trips ADD COLUMN mode TEXT NOT NULL DEFAULT 'drive'")
+        conn.commit()
+    except Exception:
+        _safe_rollback(conn)   # a failed migration must not block startup
 
 
 def _widen_coordinate_columns(cur, conn) -> None:
@@ -180,7 +201,7 @@ def _widen_coordinate_columns(cur, conn) -> None:
 
 _COLUMNS = ["id", "user_id", "label", "destination", "dest_lat", "dest_lon",
             "arrive_at", "days", "time_of_day", "source", "external_id",
-            "enabled", "created_at"]
+            "enabled", "created_at", "mode"]
 
 
 def _row_to_trip(row) -> dict:
@@ -222,6 +243,9 @@ def save_trip(trip: dict, user_id: str = LOCAL_USER) -> dict:
         "external_id": trip.get("external_id"),
         "enabled": 1 if trip.get("enabled", True) else 0,
         "created_at": (existing or {}).get("created_at") or datetime.utcnow().isoformat(timespec="seconds"),
+        # A calendar re-sync passes no mode, so an imported event keeps the one
+        # it was given instead of snapping back to driving on every sync.
+        "mode": trip.get("mode") or (existing or {}).get("mode") or "drive",
     }
 
     with connection() as conn:

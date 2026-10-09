@@ -22,7 +22,19 @@ import requests
 
 import mock_data
 
-_DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/driving/{},{};{},{}"
+_DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/{}/{},{};{},{}"
+
+# Travel modes, keyed by the name stored on a trip, mapped to the Mapbox
+# Directions profile that routes them. Transit is absent on purpose: Mapbox has
+# no transit profile, so it needs a different provider.
+PROFILES = {"drive": "driving", "walk": "walking", "bike": "cycling"}
+MODE_NOUN = {"drive": "Drive", "walk": "Walk", "bike": "Bike ride"}
+
+
+def normalize_mode(mode: str | None) -> str:
+    """Any unknown or missing mode is a drive, which is what every trip was
+    before modes existed."""
+    return mode if mode in PROFILES else "drive"
 _RESEND_URL = "https://api.resend.com/emails"
 
 # Same thresholds the map uses, so an emailed alert and the on-screen one agree.
@@ -68,14 +80,15 @@ def point_to_line_km(point, line) -> float:
 
 
 def route(origin: tuple[float, float], destination: tuple[float, float],
-          token: str | None = None) -> dict | None:
-    """Driving route from Mapbox. Coordinates are (lon, lat)."""
+          token: str | None = None, mode: str = "drive") -> dict | None:
+    """Route from Mapbox for one travel mode. Coordinates are (lon, lat)."""
     token = token or os.environ.get("MAPBOX_TOKEN", "")
     if not token:
         return None
     try:
         resp = requests.get(
-            _DIRECTIONS_URL.format(origin[0], origin[1], destination[0], destination[1]),
+            _DIRECTIONS_URL.format(PROFILES[normalize_mode(mode)],
+                                   origin[0], origin[1], destination[0], destination[1]),
             params={"access_token": token, "geometries": "geojson", "overview": "full"},
             timeout=20,
         )
@@ -96,7 +109,8 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
 def build_context(trip: dict) -> dict | None:
     """Assemble the same trip context the browser POSTs to /api/brief."""
     home = mock_data.HOME
-    drawn = route((home["lon"], home["lat"]), (trip["dest_lon"], trip["dest_lat"]))
+    mode = normalize_mode(trip.get("mode"))
+    drawn = route((home["lon"], home["lat"]), (trip["dest_lon"], trip["dest_lat"]), mode=mode)
     if not drawn:
         return None
 
@@ -112,9 +126,12 @@ def build_context(trip: dict) -> dict | None:
             "reason": f"{disruption.get('note', '')} ({disruption.get('time', '')} · {km:.1f} km from route)",
         })
 
-    parking = mock_data.get_metered_streets(trip["dest_lat"], trip["dest_lon"])
+    # Parking only matters to a driver, so the lookup is skipped otherwise.
+    parking = (mock_data.get_metered_streets(trip["dest_lat"], trip["dest_lon"])
+               if mode == "drive" else {})
     return {
         "destination": trip.get("destination") or trip.get("label"),
+        "mode": mode,
         "dest_lat": trip["dest_lat"],
         "dest_lon": trip["dest_lon"],
         "eta_min": drawn["eta_min"],
@@ -137,7 +154,8 @@ def format_email(trip: dict, alert: dict, context: dict) -> tuple[str, str]:
         "",
         f"Trip:        {trip.get('label')} → {context.get('destination')}",
         f"Arriving:    {pretty}",
-        f"Drive:       {context.get('eta_min')} min, {context.get('distance_mi')} mi from home",
+        f"{MODE_NOUN[normalize_mode(context.get('mode'))] + ':':<13}"
+        f"{context.get('eta_min')} min, {context.get('distance_mi')} mi from home",
         "",
         alert.get("why", ""),
         "",

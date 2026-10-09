@@ -138,7 +138,10 @@ matters; a distant or timing-irrelevant one does not.
 a threat to seem useful.
 - Parking pressure at the destination is worth a mention when it looks tight, \
 but it is secondary to route disruptions.
-- Weather matters only when it would change the drive: rain likely during the \
+- The travel mode changes what matters. Driving: road incidents and parking. \
+Walking or cycling: highway incidents are irrelevant unless they close streets \
+the route uses, parking does not apply, and weather matters far more.
+- Weather matters only when it would change the trip: rain likely during the \
 window, strong wind, poor visibility. Ordinary Bay Area fog or mild cool \
 temperatures are not a risk and should not be mentioned.
 - The news headlines are raw and unfiltered. Most will be irrelevant to this \
@@ -156,9 +159,13 @@ RECOMMENDATION: <one concrete action, or "No action needed" when RISK is none>
 """
 
 
+_MODE_WORDS = {"drive": "driving", "walk": "walking", "bike": "cycling"}
+
+
 def _format_trip_context(ctx: dict) -> str:
     lines = [
         f"Destination: {ctx.get('destination', 'unknown')}",
+        f"Travel mode: {_MODE_WORDS.get(ctx.get('mode'), 'driving')}",
         f"ETA: {ctx.get('eta_min', '?')} min, {ctx.get('distance_mi', '?')} mi from home.",
         "",
         "Predicted disruptions on the route:",

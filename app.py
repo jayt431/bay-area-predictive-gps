@@ -301,6 +301,8 @@ def _fallback_brief(ctx: dict) -> dict:
     reds = [d for d in disruptions if d.get("severity") == "red"]
     yellows = [d for d in disruptions if d.get("severity") == "yellow"]
     dest = ctx.get("destination", "your destination")
+    mode = alerts.normalize_mode(ctx.get("mode"))
+    trip_word = {"drive": "drive", "walk": "walk", "bike": "ride"}[mode]
 
     if reds:
         risk = "high"
@@ -314,7 +316,7 @@ def _fallback_brief(ctx: dict) -> dict:
         rec = "No action needed, but keep an eye out near the flagged area."
     else:
         risk = "none"
-        headline = f"Clear run to {dest}."
+        headline = f"Clear {trip_word} to {dest}."
         why = "No disruptions were detected on your route."
         rec = "No action needed."
 
@@ -329,10 +331,12 @@ def _fallback_brief(ctx: dict) -> dict:
     if weather_alerts:
         why = _as_sentence(why) + " " + " ".join(weather_alerts)
         if risk == "none":
-            risk = "low"
+            # On foot or on a bike, rain or wind is the trip, not a footnote.
+            risk = "low" if mode == "drive" else "medium"
             headline = f"Clear route to {dest}, but check the weather."
         if rec == "No action needed.":
-            rec = "Allow a little extra time for the conditions."
+            rec = ("Allow a little extra time for the conditions." if mode == "drive"
+                   else "Bring a rain layer, or consider driving instead.")
     return {"risk": risk, "headline": headline, "why": why, "recommendation": rec, "raw": None}
 
 
@@ -468,6 +472,7 @@ def add_schedule():
         "days": body.get("days"),
         "time_of_day": body.get("time_of_day"),
         "source": "manual",
+        "mode": alerts.normalize_mode(body.get("mode")),
     })
     return jsonify({"trip": trip}), 201
 

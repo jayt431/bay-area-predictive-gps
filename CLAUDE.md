@@ -345,8 +345,19 @@ directly in code.
   three personas remain only for the agent + `/map-test`.
 - **Search**: type any Bay Area address (Mapbox Geocoding) or tap a suggested
   chip. **Saved destinations** persist via browser `localStorage` (`bapg_saved`).
-- **Routing**: real driving route via Mapbox Directions; route summary panel
+- **Routing**: real route via Mapbox Directions; route summary panel
   shows ETA, distance, and on-route disruption count.
+- **Travel mode**: Drive / Walk / Bike tabs on the route card. All three
+  profiles (`driving`, `walking`, `cycling`) are fetched in parallel on each
+  pick, so every tab shows its own time and switching is instant; the choice
+  persists in `localStorage` (`bapg_mode`). The mode decides more than the line:
+  parking is drive-only (and a late meters response is dropped if the mode
+  changed meanwhile), walking draws dashed, the brief receives `mode`, and the
+  nav labels follow it. Scheduled trips store `mode` too (column added by
+  `store._add_mode_column`, default `drive`; a calendar re-sync keeps the
+  existing value), and `alerts.route()` routes with it. **Transit is not a
+  Mapbox profile** — it needs another provider (Google Routes) and is a
+  separate piece of work.
 - **Disruptions**: pool in `mock_data` (`GET /api/disruptions`); frontend keeps
   those within 0.5km (red) / 2km (yellow) of the route line (Turf). Native GL
   circle/symbol layers, not HTML markers (fixes zoom jank). Bell + alert panel.

@@ -34,7 +34,9 @@ local, easy to verify by eye, and has unusually good open data.
 Follow one trip through the system:
 
 1. **You pick a destination.** The browser asks Mapbox to turn "Ferry Building"
-   into coordinates, then asks Mapbox Directions for a driving route.
+   into coordinates, then asks Mapbox Directions for a route — driving,
+   walking, and cycling at once, so the Drive / Walk / Bike tabs each show
+   their own time.
 2. **The browser checks the route against a pool of known disruptions.** The
    server hands it every active disruption in the region; the browser measures
    each one's distance from the route line. Within 0.5 km is red, within 2 km is
@@ -137,6 +139,25 @@ empty past the first fortnight.
 
 See §6 for why calendars work this way rather than through "sign in with
 Google."
+
+### Choosing how you travel
+A route card with Drive / Walk / Bike tabs, each showing its travel time. It is
+more than a different line on the map, because the mode changes what matters:
+
+- **Parking** appears only when driving.
+- **Disruptions** are still measured against the route, but a walking route
+  never runs along the freeway, so highway crashes drop out on their own —
+  while a blocked sidewalk on the walking route is exactly what should show.
+- **The brief** knows the mode. Rain on a walk or bike ride raises the risk
+  and suggests a rain layer instead of "allow extra time".
+- **Scheduled trips** remember their mode, so the night-before alert routes
+  the way you will actually travel.
+
+**Transit is deliberately not in this step.** Mapbox, which draws every route
+here, has no public-transit directions at all. Transit needs a second provider
+(Google's Routes API is the practical one) plus 511's transit alerts for the
+predictive side — BART delays, Muni service changes. That is the next big
+piece, and the mode switch is the foundation it plugs into.
 
 ### Privacy, persistence, and plumbing
 Three fixes that came out of deploying it:
