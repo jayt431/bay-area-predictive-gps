@@ -8,7 +8,7 @@ was diagnosed, and how to explain any of it to another person.
 Upload this file into a Claude conversation and ask questions about anything in
 it. It is meant to be talked through, not just read.
 
-**Last updated:** 2026-10-08 · **Live:** https://bay-area-predictive-gps.onrender.com ·
+**Last updated:** 2026-10-09 · **Live:** https://bay-area-predictive-gps.onrender.com ·
 **Repo:** github.com/jayt431/bay-area-predictive-gps
 
 ---
@@ -66,7 +66,7 @@ Being able to say this precisely is worth more than claiming everything is live.
 | Metered street parking | **Real** | DataSF (every SFMTA meter) |
 | Parking garages | **Real** | Read from Mapbox map tiles in the browser |
 | Blocked streets / civic events | **Real** | San Francisco 311 |
-| Highway incidents & construction | **Real** | 511 SF Bay (Open511) |
+| Highway incidents & construction | **Real** | 511 SF Bay (Open511), live in production |
 | Parking availability | **Invented** | Predicted, not measured — no live curb feed exists |
 | Break-in risk | **Invented** | Placeholder; real path is SFPD incident data |
 | Events (concerts, games) | **Invented** | Real path is Ticketmaster |
@@ -198,6 +198,11 @@ whether data is live or mocked and, when mocked, why — `401 Unauthorized`, in
 plain text, with the key redacted. The same class of invisible failure as the
 DataSF outage, which had gone unnoticed for weeks.
 
+**The actual cause, once it was visible:** a single missing digit in the value
+pasted into the host's dashboard. Worth sitting with — the bug was trivial, but
+finding it was impossible until the system was made to say what was wrong. The
+diagnostic took longer to write than the fix, and that was the right trade.
+
 **The pattern across all of these:** every one was a *silent* failure. Nothing
 crashed. The app kept looking correct while serving wrong or fake data. Most of
 the real work was making failures announce themselves.
@@ -273,8 +278,6 @@ why.
 
 **Known open items:**
 
-- 511 token is rejected in production (`401`) — the value in Render does not match
-  the working one in `.env`
 - No email provider yet, so alerts compute but do not send
 - The nightly job is scheduled through GitHub Actions, which is free but
   imprecise, and auto-disables after 60 days without repository activity
