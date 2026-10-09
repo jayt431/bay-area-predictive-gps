@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## PROJECT-NOTES.md
+
+`PROJECT-NOTES.md` is the plain-English companion to this file — written for
+Jaret rather than for an agent, so he can upload it to a Claude conversation and
+talk through the project to learn it and explain it to other people. It covers
+what the system does, how a trip flows through it, what is real versus mocked,
+every problem diagnosed and how, the decisions and their trade-offs, a
+vocabulary section, and answers to questions someone might ask.
+
+**Keep it current.** When a meaningful change lands — a feature, a source going
+from mocked to live, a bug diagnosed, an open item closing — update
+PROJECT-NOTES.md in the same session, while the reasoning is fresh, and bump its
+"Last updated" line. It is not a changelog; it is an explanation.
+
 ## Commands
 
 ```bash
