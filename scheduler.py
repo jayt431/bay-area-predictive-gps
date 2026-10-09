@@ -8,7 +8,8 @@ concrete one-off occurrences. Both live in the same table so everything
 downstream — the upcoming list, the pre-trip alerts — treats them alike.
 
 `DAYS_AHEAD` bounds the import. A calendar feed can contain years of a weekly
-standup; only the near future is actionable.
+standup; only the near future is actionable. It covers about two months so the
+panel's month view is populated through the end of next month.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from datetime import datetime, timedelta
 import calendar_sync
 import store
 
-DAYS_AHEAD = 14
+DAYS_AHEAD = 62
 ICS_URL_KEY = "ics_url"
 ALERT_EMAIL_KEY = "alert_email"
 _WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]

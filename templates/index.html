@@ -160,7 +160,7 @@
       border-radius: 23px; display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink);
       font-family: var(--sans); font-size: 13px; font-weight: 600; }
     #sched-btn:hover { border-color: var(--accent); }
-    #sched-panel { position: absolute; z-index: 4; top: 76px; right: 20px; width: 360px; padding: 8px;
+    #sched-panel { position: absolute; z-index: 4; top: 76px; right: 20px; width: 380px; padding: 8px;
       max-height: calc(100vh - 100px); overflow-y: auto; display: none; }
     #sched-panel.open { display: block; }
     .sc-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
@@ -191,6 +191,58 @@
     .sc-note { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.45; }
     .sc-note.err { color: #FF8A80; }
     .sc-note.ok { color: var(--accent); }
+    .sc-tag.cal { border-color: rgba(122,162,255,0.45); color: #7AA2FF; }
+    .sc-lbl { display: block; font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted); margin-top: 10px; }
+    .sc-lbl + .sc-input, .sc-lbl + .where-wrap .sc-input { margin-top: 4px; }
+    .sc-pair { display: flex; gap: 8px; }
+    .sc-pair > * { flex: 1; min-width: 0; }
+    .sc-pair.inline { align-items: center; }
+    .sc-pair.inline .conn-btn { flex: 0 0 auto; margin-top: 6px; }
+    .sc-btn.ghost { color: var(--muted); }
+    select.sc-input { appearance: none; cursor: pointer; background-image:
+      linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+    select.sc-input option { background: #16161a; }
+    input.sc-input[type="date"], input.sc-input[type="time"] { color-scheme: dark; }
+    .where-wrap { position: relative; }
+    #where-sugg { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; display: none;
+      background: #141418; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+    #where-sugg.open { display: block; }
+    /* Month calendar */
+    .cal-nav { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+    .cal-month { flex: 1; font-size: 14px; font-weight: 600; color: var(--ink); }
+    .cal-arrow, .cal-today { background: none; border: 1px solid var(--line); color: var(--ink);
+      border-radius: 7px; cursor: pointer; height: 28px; }
+    .cal-arrow { width: 28px; font-size: 16px; line-height: 1; }
+    .cal-today { padding: 0 10px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--muted); }
+    .cal-arrow:hover, .cal-today:hover { border-color: var(--accent); }
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+    .cal-dow span { text-align: center; font-family: var(--mono); font-size: 9px; color: var(--muted); padding-bottom: 4px; }
+    .cal-day { background: none; border: 1px solid transparent; border-radius: 8px; height: 40px; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+      color: var(--ink); font-family: var(--sans); font-size: 12px; padding: 0; }
+    .cal-day:hover { background: rgba(255,255,255,0.05); }
+    .cal-day.other, .cal-day.past { color: #555; }
+    .cal-day.today > span:first-child { color: var(--accent); font-weight: 700; }
+    .cal-day.sel { border-color: var(--accent); background: rgba(0,229,199,0.08); }
+    .cal-day .dots { display: flex; gap: 2px; height: 4px; }
+    .cal-day .dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
+    .cal-day .dots i.cal { background: #7AA2FF; }
+    .day-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+    .day-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+    .day-add { background: none; border: none; color: var(--accent); font-family: var(--mono); font-size: 10px;
+      letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; padding: 4px 0; }
+    .day-empty { font-size: 12px; color: var(--muted); padding: 6px 0 2px; }
+    .sc-row .when { min-width: 58px; }
+    .conn-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+    .conn-row .sc-note { margin-top: 2px; }
+    .conn-name { font-size: 13px; color: var(--ink); }
+    .conn-btn { background: none; border: 1px solid var(--line); color: var(--accent); border-radius: 7px;
+      font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 7px 12px; cursor: pointer; white-space: nowrap; }
+    .conn-btn:hover { border-color: var(--accent); }
     .feed-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
     .feed-place { font-size: 14px; font-weight: 600; color: var(--ink); margin-top: 3px; }
     .feed-item { display: flex; gap: 11px; padding: 11px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
@@ -362,9 +414,9 @@
     </svg>Schedule
   </div>
 
-  <!-- Scheduler panel -->
+  <!-- Scheduler panel: a month calendar. Pick a day to see its trips or add one. -->
   <div id="sched-panel" class="glass">
-    <div class="sc-head"><span class="mono-label">Scheduled trips</span></div>
+    <div class="sc-head"><span class="mono-label">Schedule</span></div>
 
     <div class="sc-sec" id="sched-lock" hidden>
       <div class="sc-note">This schedule is private. Enter the passcode to view it.</div>
@@ -375,35 +427,79 @@
     </div>
 
     <div id="sched-main">
-      <div class="sc-sec"><div id="sched-list"></div></div>
-
-    <div class="sc-sec">
-      <span class="mono-label">Add this destination</span>
-      <div id="sched-add-body">
-        <input id="sched-label" class="sc-input" placeholder="Label (e.g. Work)" />
-        <input id="sched-time" class="sc-input" type="time" value="08:30" />
-        <div class="sc-days" id="sched-days"></div>
-        <div class="sc-note">Pick days to repeat weekly, or leave them off for a one-time trip.</div>
-        <input id="sched-date" class="sc-input" type="date" />
-        <button class="sc-btn" id="sched-add" onclick="addScheduled()">Add trip</button>
+      <div class="sc-sec">
+        <div class="cal-nav">
+          <button class="cal-arrow" onclick="shiftMonth(-1)" aria-label="Previous month">&lsaquo;</button>
+          <span class="cal-month" id="cal-month"></span>
+          <button class="cal-today" onclick="goToday()">Today</button>
+          <button class="cal-arrow" onclick="shiftMonth(1)" aria-label="Next month">&rsaquo;</button>
+        </div>
+        <div class="cal-grid cal-dow"><span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span></div>
+        <div class="cal-grid" id="cal-grid"></div>
       </div>
-      <div class="sc-note" id="sched-add-note"></div>
-    </div>
 
-    <div class="sc-sec">
-      <span class="mono-label">Calendar</span>
-      <div class="sc-note">Paste the secret iCal URL from Google, Apple or Outlook. Read-only, and it stays on the server.</div>
-      <input id="sched-ics" class="sc-input" placeholder="https://calendar.google.com/.../basic.ics" />
-      <button class="sc-btn" id="sched-connect" onclick="connectCalendar()">Connect calendar</button>
-      <div class="sc-note" id="sched-cal-note"></div>
-    </div>
+      <div class="sc-sec">
+        <div class="day-head">
+          <span class="day-title" id="day-title"></span>
+          <button class="day-add" id="day-add" onclick="openAddForm()">+ Add trip</button>
+        </div>
+        <div id="day-list"></div>
 
-    <div class="sc-sec">
-      <span class="mono-label">Alert email</span>
-      <div class="sc-note">Where the pre-trip alert goes when the app is closed.</div>
-      <input id="sched-email" class="sc-input" type="email" placeholder="you@example.com" />
-      <button class="sc-btn" onclick="saveAlertEmail()">Save email</button>
-      <div class="sc-note" id="sched-email-note"></div>
+        <div id="add-form" hidden>
+          <label class="sc-lbl">Where</label>
+          <div class="where-wrap">
+            <input id="sched-where" class="sc-input" placeholder="Search a place or address" autocomplete="off" />
+            <div id="where-sugg"></div>
+          </div>
+          <input id="sched-label" class="sc-input" placeholder="Name (optional), e.g. Work" />
+          <div class="sc-pair">
+            <div><label class="sc-lbl">Date</label><input id="sched-date" class="sc-input" type="date" onchange="renderRepeatOptions()" /></div>
+            <div><label class="sc-lbl">Arrive by</label><input id="sched-time" class="sc-input" type="time" value="08:30" /></div>
+          </div>
+          <label class="sc-lbl">Repeat</label>
+          <select id="sched-repeat" class="sc-input" onchange="onRepeatChange()"></select>
+          <div class="sc-days" id="sched-days" hidden></div>
+          <div class="sc-pair">
+            <button class="sc-btn ghost" onclick="closeAddForm()">Cancel</button>
+            <button class="sc-btn" id="sched-add" onclick="addScheduled()">Add trip</button>
+          </div>
+          <div class="sc-note" id="sched-add-note"></div>
+        </div>
+      </div>
+
+      <div class="sc-sec">
+        <span class="mono-label">Connections</span>
+        <div class="conn-row">
+          <div>
+            <div class="conn-name">Google Calendar</div>
+            <div class="sc-note" id="sched-cal-status">Not connected</div>
+          </div>
+          <button class="conn-btn" id="cal-toggle" onclick="toggleCalForm()">Connect</button>
+        </div>
+        <div id="cal-form" hidden>
+          <div class="sc-note">In Google Calendar: Settings &rarr; your calendar &rarr; <b>Secret address in iCal format</b>. Paste it here. Apple and Outlook calendars work too.</div>
+          <input id="sched-ics" class="sc-input" placeholder="https://calendar.google.com/.../basic.ics" />
+          <button class="sc-btn" id="sched-connect" onclick="connectCalendar()">Import events</button>
+        </div>
+        <div id="cal-actions" hidden>
+          <div class="sc-pair">
+            <button class="sc-btn ghost" onclick="disconnectCalendar()">Disconnect</button>
+            <button class="sc-btn" id="sched-sync" onclick="connectCalendar()">Sync now</button>
+          </div>
+        </div>
+        <div class="sc-note" id="sched-cal-note"></div>
+
+        <div class="conn-row">
+          <div>
+            <div class="conn-name">Alert email</div>
+            <div class="sc-note">Where the night-before alert goes.</div>
+          </div>
+        </div>
+        <div class="sc-pair inline">
+          <input id="sched-email" class="sc-input" type="email" placeholder="you@example.com" />
+          <button class="conn-btn" onclick="saveAlertEmail()">Save</button>
+        </div>
+        <div class="sc-note" id="sched-email-note"></div>
       </div>
     </div>
   </div>
@@ -1411,18 +1507,213 @@
       await refreshSchedule();
     }
 
+    // The panel is a month calendar. Trips are expanded onto it client-side
+    // from the raw rows in GET /api/schedule: a one-off lands on its date, a
+    // repeating trip on each matching weekday. Repeating trips carry no start
+    // date, so they are drawn from today forward only.
+    const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    let schedData = { all: [], calendar: {} };
+    let calCursor = null;     // first day of the month on screen
+    let selectedKey = null;   // "YYYY-MM-DD" of the selected day
+    let schedWhere = null;    // { name, lat, lon } chosen in the add form
+    let whereResults = [];
+
+    const pad2 = n => String(n).padStart(2, "0");
+    const dateKey = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    const parseKey = k => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+    const weekdayIndex = d => (d.getDay() + 6) % 7;   // Monday = 0, matching SCHED_DAYS
+    const todayKey = () => dateKey(new Date());
+
+    function formatTime(hhmm) {
+      const [h, m] = hhmm.split(":").map(Number);
+      return `${h % 12 || 12}:${pad2(m)} ${h < 12 ? "AM" : "PM"}`;
+    }
+
+    function repeatLabel(trip) {
+      const days = (trip.days || "").split(",").map(d => d.trim()).filter(Boolean);
+      if (days.length === 7) return "Daily";
+      if (days.length === 5 && !days.includes("SA") && !days.includes("SU")) return "Weekdays";
+      if (days.length === 1) return "Weekly";
+      return days.map(d => d[0] + d[1].toLowerCase()).join(" · ");
+    }
+
+    function tripsOn(key) {
+      const out = [];
+      const dayCode = SCHED_DAYS[weekdayIndex(parseKey(key))];
+      for (const t of schedData.all || []) {
+        if (t.enabled === 0 || t.enabled === false) continue;
+        if (t.arrive_at) {
+          if (t.arrive_at.slice(0, 10) === key) out.push({ trip: t, time: t.arrive_at.slice(11, 16) });
+        } else if (t.days && t.time_of_day && key >= todayKey()
+                   && t.days.split(",").map(d => d.trim()).includes(dayCode)) {
+          out.push({ trip: t, time: t.time_of_day.slice(0, 5) });
+        }
+      }
+      return out.sort((a, b) => a.time.localeCompare(b.time));
+    }
+
+    function renderCalendar() {
+      document.getElementById("cal-month").textContent =
+        calCursor.toLocaleDateString([], { month: "long", year: "numeric" });
+      const start = new Date(calCursor);
+      start.setDate(1 - calCursor.getDay());               // back to the Sunday
+      const last = new Date(calCursor.getFullYear(), calCursor.getMonth() + 1, 0);
+      const cells = Math.ceil((calCursor.getDay() + last.getDate()) / 7) * 7;
+      const today = todayKey();
+      let html = "";
+      for (let i = 0; i < cells; i++) {
+        const d = new Date(start); d.setDate(start.getDate() + i);
+        const key = dateKey(d);
+        const trips = tripsOn(key);
+        const cls = ["cal-day"];
+        if (d.getMonth() !== calCursor.getMonth()) cls.push("other");
+        if (key < today) cls.push("past");
+        if (key === today) cls.push("today");
+        if (key === selectedKey) cls.push("sel");
+        const dots = trips.slice(0, 3).map(o =>
+          `<i class="${o.trip.source === "ics" ? "cal" : ""}"></i>`).join("");
+        html += `<button class="${cls.join(" ")}" onclick="selectDay('${key}')">
+                   <span>${d.getDate()}</span><span class="dots">${dots}</span></button>`;
+      }
+      document.getElementById("cal-grid").innerHTML = html;
+    }
+
+    function renderDay() {
+      const d = parseKey(selectedKey);
+      document.getElementById("day-title").textContent =
+        d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+      document.getElementById("day-add").hidden = selectedKey < todayKey();
+      const trips = tripsOn(selectedKey);
+      document.getElementById("day-list").innerHTML = trips.length ? trips.map(({ trip, time }) => {
+        const tag = trip.source === "ics" ? "Calendar" : (trip.days ? repeatLabel(trip) : "");
+        // Calendar trips come back on the next sync, so they are removed in the calendar itself.
+        const del = trip.source === "ics" ? "" :
+          `<button class="sc-del" title="${trip.days ? "Remove every repeat" : "Remove"}"
+                   onclick="deleteScheduled('${trip.id}')">×</button>`;
+        return `<div class="sc-row">
+                  <span class="when">${formatTime(time)}</span>
+                  <span class="nm">${escapeHtml(trip.label)}</span>
+                  ${tag ? `<span class="sc-tag${trip.source === "ics" ? " cal" : ""}">${tag}</span>` : ""}
+                  ${del}
+                </div>`;
+      }).join("") : '<div class="day-empty">No trips this day.</div>';
+    }
+
+    function selectDay(key) {
+      selectedKey = key;
+      const d = parseKey(key);
+      if (d.getMonth() !== calCursor.getMonth() || d.getFullYear() !== calCursor.getFullYear())
+        calCursor = new Date(d.getFullYear(), d.getMonth(), 1);
+      renderCalendar(); renderDay();
+      if (!document.getElementById("add-form").hidden) {
+        if (key < todayKey()) closeAddForm();
+        else { document.getElementById("sched-date").value = key; renderRepeatOptions(); }
+      }
+    }
+
+    function shiftMonth(delta) {
+      calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() + delta, 1);
+      renderCalendar();
+    }
+
+    function goToday() { selectDay(todayKey()); }
+
+    // ---- Add form ----
+    function openAddForm() {
+      document.getElementById("add-form").hidden = false;
+      document.getElementById("day-add").hidden = true;
+      document.getElementById("sched-date").value = selectedKey;
+      document.getElementById("sched-date").min = todayKey();
+      document.getElementById("sched-add-note").textContent = "";
+      // Start from whatever is on the map, if anything.
+      schedWhere = currentDest ? { ...currentDest } : null;
+      document.getElementById("sched-where").value = schedWhere ? schedWhere.name : "";
+      document.getElementById("sched-repeat").value = "none";
+      schedDays.clear();
+      renderRepeatOptions();
+      if (!schedWhere) document.getElementById("sched-where").focus();
+    }
+
+    function closeAddForm() {
+      document.getElementById("add-form").hidden = true;
+      document.getElementById("day-add").hidden = selectedKey < todayKey();
+      closeWhereSuggestions();
+    }
+
+    function renderRepeatOptions() {
+      const select = document.getElementById("sched-repeat");
+      const keep = select.value || "none";
+      const dateValue = document.getElementById("sched-date").value || selectedKey;
+      const day = WEEKDAY_NAMES[weekdayIndex(parseKey(dateValue))];
+      select.innerHTML = `
+        <option value="none">Doesn't repeat</option>
+        <option value="weekly">Weekly on ${day}</option>
+        <option value="weekdays">Every weekday (Mon–Fri)</option>
+        <option value="custom">Custom days…</option>`;
+      select.value = keep;
+      onRepeatChange();
+    }
+
+    function onRepeatChange() {
+      const custom = document.getElementById("sched-repeat").value === "custom";
+      document.getElementById("sched-days").hidden = !custom;
+      if (custom && !schedDays.size) {
+        const dateValue = document.getElementById("sched-date").value || selectedKey;
+        schedDays.add(SCHED_DAYS[weekdayIndex(parseKey(dateValue))]);
+      }
+      if (custom) renderDayPicker();
+    }
+
     function renderDayPicker() {
-      const wrap = document.getElementById("sched-days");
-      wrap.innerHTML = SCHED_DAYS.map(d =>
-        `<div class="sc-day${schedDays.has(d) ? " on" : ""}" onclick="toggleSchedDay('${d}')">${d}</div>`).join("");
+      document.getElementById("sched-days").innerHTML = SCHED_DAYS.map(d =>
+        `<div class="sc-day${schedDays.has(d) ? " on" : ""}" onclick="toggleSchedDay('${d}')">${d[0]}${d[1].toLowerCase()}</div>`).join("");
     }
 
     function toggleSchedDay(day) {
       schedDays.has(day) ? schedDays.delete(day) : schedDays.add(day);
       renderDayPicker();
-      // Repeating and a single calendar date are mutually exclusive.
-      document.getElementById("sched-date").disabled = schedDays.size > 0;
     }
+
+    function wireWhereSearch() {
+      const input = document.getElementById("sched-where");
+      let timer = null;
+      input.addEventListener("input", () => {
+        schedWhere = null;                     // typed text is not a place until one is picked
+        clearTimeout(timer);
+        const q = input.value.trim();
+        if (q.length < 3) { closeWhereSuggestions(); return; }
+        timer = setTimeout(async () => {
+          const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
+            + `?access_token=${TOKEN}&country=US&limit=5&bbox=${BAY_BBOX}&proximity=${BAY_PROX}`;
+          try {
+            whereResults = (await (await fetch(url)).json()).features || [];
+          } catch { whereResults = []; }
+          const box = document.getElementById("where-sugg");
+          box.innerHTML = whereResults.map((f, i) => {
+            const name = placeName(f);
+            return `<div class="sugg-item" onmousedown="pickWhere(${i})">
+              <div class="sugg-name">${escapeHtml(name)}</div>
+              <div class="sugg-sub">${escapeHtml(f.place_name.replace(name + ", ", ""))}</div>
+            </div>`;
+          }).join("");
+          box.classList.toggle("open", whereResults.length > 0);
+        }, 250);
+      });
+      input.addEventListener("blur", () => setTimeout(closeWhereSuggestions, 150));
+    }
+
+    // Street addresses carry the house number separately from the street name.
+    const placeName = f => f.address ? `${f.address} ${f.text}` : f.text;
+
+    function pickWhere(i) {
+      const f = whereResults[i];
+      const name = placeName(f);
+      schedWhere = { name, lon: f.center[0], lat: f.center[1] };
+      document.getElementById("sched-where").value = name;
+      closeWhereSuggestions();
+    }
+
+    function closeWhereSuggestions() { document.getElementById("where-sugg").classList.remove("open"); }
 
     async function toggleSchedule() {
       const panel = document.getElementById("sched-panel");
@@ -1432,7 +1723,13 @@
       document.getElementById("alert-panel").classList.remove("open");
       if (!opening) return;
       panel.classList.add("open");
-      renderDayPicker();
+      if (!calCursor) {
+        const now = new Date();
+        calCursor = new Date(now.getFullYear(), now.getMonth(), 1);
+        selectedKey = todayKey();
+        wireWhereSearch();
+      }
+      renderCalendar(); renderDay();
       await refreshSchedule();
     }
 
@@ -1440,47 +1737,31 @@
       let data;
       try {
         const res = await schedFetch("/api/schedule");
-        if (res.status === 401 || res.status === 429) return;
+        if (!res.ok) return;                  // 401/429 already showed the lock
         data = await res.json();
       } catch {
-        document.getElementById("sched-list").innerHTML =
-          '<div class="alert-empty">Schedule unavailable.</div>';
+        document.getElementById("day-list").innerHTML =
+          '<div class="day-empty">Schedule unavailable.</div>';
         return;
       }
       hideLock();
-      renderScheduleList(data.trips || []);
+      schedData = data;
+      renderCalendar(); renderDay();
 
       const cal = data.calendar || {};
-      document.getElementById("sched-connect").textContent =
-        cal.connected ? "Re-sync calendar" : "Connect calendar";
-      const calNote = document.getElementById("sched-cal-note");
-      calNote.className = "sc-note";
-      calNote.textContent = cal.connected ? `Connected to ${cal.hint || "a calendar"}.` : "";
+      document.getElementById("sched-cal-status").textContent =
+        cal.connected ? `Connected${cal.hint ? " · " + cal.hint : ""}` : "Not connected";
+      document.getElementById("cal-toggle").textContent = cal.connected ? "Manage" : "Connect";
+      if (cal.connected) document.getElementById("cal-form").hidden = true;
+      else document.getElementById("cal-actions").hidden = true;
       if (data.alert_email) document.getElementById("sched-email").value = data.alert_email;
-
-      // Adding needs somewhere to go — the destination currently on the map.
-      const canAdd = !!currentDest;
-      document.getElementById("sched-add").disabled = !canAdd;
-      const addNote = document.getElementById("sched-add-note");
-      addNote.className = "sc-note";
-      addNote.textContent = canAdd
-        ? `Destination: ${currentDest.name}`
-        : "Search for a destination first, then add it here.";
     }
 
-    function renderScheduleList(trips) {
-      const list = document.getElementById("sched-list");
-      if (!trips.length) {
-        list.innerHTML = '<div class="alert-empty">Nothing scheduled yet.</div>';
-        return;
-      }
-      list.innerHTML = trips.map(t => `
-        <div class="sc-row">
-          <span class="nm">${escapeHtml(t.label)}</span>
-          <span class="sc-tag">${t.source === "ics" ? "cal" : "manual"}</span>
-          <span class="when">${formatWhen(t.next_at)}</span>
-          <button class="sc-del" title="Remove" onclick="deleteScheduled('${t.id}')">×</button>
-        </div>`).join("");
+    function toggleCalForm() {
+      const which = schedData.calendar && schedData.calendar.connected ? "cal-actions" : "cal-form";
+      const el = document.getElementById(which);
+      el.hidden = !el.hidden;
+      document.getElementById("sched-cal-note").textContent = "";
     }
 
     function escapeHtml(s) {
@@ -1488,49 +1769,43 @@
         ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     }
 
-    function formatWhen(iso) {
-      if (!iso) return "";
-      const d = new Date(iso);
-      if (isNaN(d)) return iso;
-      return d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-    }
-
     async function addScheduled() {
-      if (!currentDest) return;
       const note = document.getElementById("sched-add-note");
-      const time = document.getElementById("sched-time").value || "08:30";
+      const fail = msg => { note.className = "sc-note err"; note.textContent = msg; };
       const date = document.getElementById("sched-date").value;
+      const time = document.getElementById("sched-time").value;
+      const repeat = document.getElementById("sched-repeat").value;
+      if (!schedWhere) return fail("Pick a place from the search results.");
+      if (!date || !time) return fail("Set a date and an arrival time.");
+
       const body = {
-        label: document.getElementById("sched-label").value.trim() || currentDest.name,
-        destination: currentDest.name,
-        dest_lat: currentDest.lat, dest_lon: currentDest.lon,
+        label: document.getElementById("sched-label").value.trim() || schedWhere.name,
+        destination: schedWhere.name,
+        dest_lat: schedWhere.lat, dest_lon: schedWhere.lon,
       };
-      if (schedDays.size) {
-        body.days = [...schedDays].join(",");
-        body.time_of_day = time;
-      } else if (date) {
+      const weekday = SCHED_DAYS[weekdayIndex(parseKey(date))];
+      if (repeat === "none") {
+        if (new Date(`${date}T${time}`) < new Date()) return fail("That time has already passed.");
         body.arrive_at = `${date}T${time}`;
       } else {
-        note.className = "sc-note err";
-        note.textContent = "Pick repeat days or a date.";
-        return;
+        const days = repeat === "weekly" ? [weekday]
+                   : repeat === "weekdays" ? ["MO", "TU", "WE", "TH", "FR"]
+                   : SCHED_DAYS.filter(d => schedDays.has(d));
+        if (!days.length) return fail("Pick at least one day.");
+        body.days = days.join(",");
+        body.time_of_day = time;
       }
+
       const res = await schedFetch("/api/schedule", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        note.className = "sc-note err";
-        note.textContent = data.error || "Could not add that trip.";
-        return;
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return fail(data.error || "Could not add that trip.");
       document.getElementById("sched-label").value = "";
-      schedDays.clear(); renderDayPicker();
-      document.getElementById("sched-date").disabled = false;
+      closeAddForm();
+      selectedKey = date;
       await refreshSchedule();
-      note.className = "sc-note ok";
-      note.textContent = "Added.";
     }
 
     async function deleteScheduled(id) {
@@ -1540,11 +1815,15 @@
 
     async function connectCalendar() {
       const note = document.getElementById("sched-cal-note");
-      const btn = document.getElementById("sched-connect");
       const url = document.getElementById("sched-ics").value.trim();
-      btn.disabled = true;
+      const connected = schedData.calendar && schedData.calendar.connected;
+      if (!url && !connected) {
+        note.className = "sc-note err";
+        note.textContent = "Paste your calendar's iCal address first.";
+        return;
+      }
       note.className = "sc-note";
-      note.textContent = url ? "Fetching calendar…" : "Syncing…";
+      note.textContent = url ? "Importing…" : "Syncing…";
       try {
         // With a URL this connects or replaces; empty re-syncs what is stored.
         const res = url
@@ -1559,15 +1838,26 @@
         } else {
           const sync = data.sync || data;
           note.className = "sc-note ok";
-          note.textContent = `Imported ${sync.imported || 0} trip(s)` +
-            (sync.skipped && sync.skipped.length ? `, ${sync.skipped.length} without a usable location` : "") + ".";
+          note.textContent = `Imported ${sync.imported || 0} event(s)` +
+            (sync.skipped && sync.skipped.length
+              ? `. ${sync.skipped.length} skipped: they need a street address as the location.` : ".");
           document.getElementById("sched-ics").value = "";
         }
       } catch {
         note.className = "sc-note err";
         note.textContent = "Could not reach the server.";
       }
-      btn.disabled = false;
+      await refreshSchedule();
+    }
+
+    async function disconnectCalendar() {
+      if (!confirm("Disconnect the calendar? Its imported events will be removed from the schedule.")) return;
+      await schedFetch("/api/schedule/calendar", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: null }),
+      });
+      document.getElementById("cal-actions").hidden = true;
+      document.getElementById("sched-cal-note").textContent = "";
       await refreshSchedule();
     }
 

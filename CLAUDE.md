@@ -197,6 +197,14 @@ against a remote Postgres each one is a fresh TCP and TLS handshake, and
 sync job, tests) it falls back to a short-lived connection, so no caller needs
 to know whether a scope exists.
 
+**The panel is a month calendar, expanded client-side.** `GET /api/schedule`
+returns the raw rows under `all`; the browser places one-offs on their
+`arrive_at` date and repeating trips on each matching weekday. Repeating trips
+store no start date, so they are drawn from today forward only. The add form
+sends the same two shapes the endpoint always accepted (`arrive_at`, or `days` +
+`time_of_day`), so the redesign needed no schema change. `DAYS_AHEAD` (62) is
+sized so imported events fill the month view.
+
 **Calendar sync is over secret .ics URLs, not OAuth.** Google, Apple and
 Outlook all publish one, so a single parser covers every provider with no
 consent screen, no client secret and no accounts. The trade-offs are real and

@@ -8,7 +8,7 @@ was diagnosed, and how to explain any of it to another person.
 Upload this file into a Claude conversation and ask questions about anything in
 it. It is meant to be talked through, not just read.
 
-**Last updated:** 2026-10-09 · **Live:** https://bay-area-predictive-gps.onrender.com ·
+**Last updated:** 2026-10-08 · **Live:** https://bay-area-predictive-gps.onrender.com ·
 **Repo:** github.com/jayt431/bay-area-predictive-gps
 
 ---
@@ -117,6 +117,23 @@ arrive beforehand.
 Two ways in. **Manual:** pick a destination, a time, and which weekdays it
 repeats. **Calendar:** paste the secret calendar link that Google, Apple, and
 Outlook all publish, and events with a location become scheduled trips.
+
+**The panel is a month calendar.** The first version was a single form with day
+buttons *and* a date box, where picking a day silently greyed the date out —
+"repeats weekly" and "happens once" were two modes jammed into one form with no
+visible switch, and it read as broken. It was rebuilt the way Google and Apple
+Calendar already work, so there is nothing new to learn: a month grid with a dot
+on each day that has a trip (teal for ones you added, blue for imported), click
+a day to see it, and "+ Add trip" opens a form that asks *where*, a date, an
+"arrive by" time, and a **Repeat** dropdown — doesn't repeat, weekly, every
+weekday, or custom days. The place is searched inside the form, so you no longer
+have to route to it on the map first.
+
+The grid is drawn entirely in the browser from the trips the server already
+returns, so this needed no database change. One consequence: a repeating trip
+has no start date stored, so it is drawn from today forward. Calendar imports
+now look about two months ahead instead of two weeks, so the month view is not
+empty past the first fortnight.
 
 See §6 for why calendars work this way rather than through "sign in with
 Google."
@@ -286,6 +303,10 @@ why.
 - Events, traffic baseline, parking availability, and break-in risk are still
   invented
 - Supabase's free tier pauses a project after 7 days of low activity
+- Imported calendar events only refresh when you connect or press "Sync now";
+  nothing re-syncs them overnight
+- "Connect Google Calendar" still means pasting the secret iCal link, not a
+  one-click sign-in (that needs OAuth — see §6)
 
 ---
 
