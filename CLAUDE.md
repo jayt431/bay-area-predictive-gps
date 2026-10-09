@@ -19,18 +19,34 @@ PROJECT-NOTES.md in the same session, while the reasoning is fresh, and bump its
 ## Commands
 
 ```bash
-pip install -r requirements.txt
+# One-time setup. The system Python has none of these, and on Apple Silicon a
+# stray x86 anaconda on PATH will not execute at all — use this venv (gitignored).
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
 
-# Web app (the main product — map GPS UI). Keys are read from a local .env.
-source .env && python app.py          # dev server at http://127.0.0.1:5000
-# Production (Render) runs: gunicorn app:app   (see Procfile)
+# Web app (the main product — map GPS UI), at http://127.0.0.1:5050
+set -a && . ./.env && set +a && ./venv/bin/python app.py
 
 # Standalone agent scenarios (the original CLI harness)
-python run_scenarios.py               # full agent run (requires ANTHROPIC_API_KEY)
-python run_scenarios.py --dry-run     # dumps raw tool output, no model call needed
+set -a && . ./.env && set +a && ./venv/bin/python run_scenarios.py --dry-run
+set -a && . ./.env && set +a && ./venv/bin/python run_scenarios.py   # needs ANTHROPIC_API_KEY
+
+# Production (Render) runs: gunicorn app:app   (see Procfile)
 ```
 
-Local dev loads keys from a gitignored `.env` (`source .env && python app.py`).
+Two things about that command line, both of which cost real time to discover:
+
+- **`set -a` is not optional.** `.env` holds bare `KEY=value` lines with no
+  `export`, so a plain `source .env` creates shell variables that the Python
+  process never sees. The app then starts with no keys and the map reports no
+  Mapbox token. `set -a` marks subsequent assignments for export; `set +a`
+  stops.
+- **The dev port is 5050, not 5000.** macOS AirPlay Receiver (ControlCenter)
+  holds 5000. Override with `PORT=xxxx`.
+
+`debug=True` in the dev entrypoint also keeps Jinja reloading templates. Without
+it, edits to `index.html` are served from a copy compiled at startup and appear
+to have no effect.
 On Render, the same vars are set in the dashboard's Environment tab.
 
 Env vars:

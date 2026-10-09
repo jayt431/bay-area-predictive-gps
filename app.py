@@ -634,4 +634,7 @@ def _parse_alert(text: str) -> dict:
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # macOS AirPlay Receiver listens on 5000, so the port is overridable.
+    # debug=True also keeps Jinja reloading templates; without it, edits to
+    # index.html are invisible until a restart.
+    app.run(debug=True, port=int(os.environ.get("PORT", "5050")))
