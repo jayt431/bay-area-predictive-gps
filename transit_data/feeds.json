@@ -1,0 +1,23 @@
+[
+  {
+    "operator": "SF",
+    "agency": "Muni",
+    "start": "20260829",
+    "end": "20270115",
+    "version": "20260829"
+  },
+  {
+    "operator": "BA",
+    "agency": "BART",
+    "start": "20260810",
+    "end": "20270110",
+    "version": "20260809"
+  },
+  {
+    "operator": "CT",
+    "agency": "Caltrain",
+    "start": "20260131",
+    "end": "20270131",
+    "version": "20260922"
+  }
+]

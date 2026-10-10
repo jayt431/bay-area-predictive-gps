@@ -31,9 +31,10 @@ set -a && . ./.env && set +a && ./venv/bin/python app.py
 set -a && . ./.env && set +a && ./venv/bin/python run_scenarios.py --dry-run
 set -a && . ./.env && set +a && ./venv/bin/python run_scenarios.py   # needs ANTHROPIC_API_KEY
 
-# Rebuild the transit schedules (Muni, BART, Caltrain) from 511, then commit
-# transit_data/. Needed when /api/health's transit_data_until is near.
+# Rebuild the transit schedules (Muni, BART, Caltrain) from 511 and verify.
+# Normally automatic: .github/workflows/transit-schedules.yml does this nightly.
 set -a && . ./.env && set +a && ./venv/bin/python gtfs_build.py
+./venv/bin/python gtfs_build.py --check
 
 # Production (Render) runs: gunicorn app:app   (see Procfile)
 ```
@@ -142,7 +143,7 @@ domain migration, which left parking looking like a dead button for weeks.
 | `MAPBOX_TOKEN` | yes | yes | URL restriction set in the Mapbox dashboard |
 | `OPENWEATHER_API_KEY` | yes | yes | — |
 | `NEWSAPI_KEY` | yes | yes | — |
-| `TRAFFIC_511_TOKEN` | yes | yes | — |
+| `TRAFFIC_511_TOKEN` | yes | yes | **also** a GitHub Actions repo secret, for the nightly schedule refresh |
 | `DATABASE_URL` | normally commented out | yes | value comes from Supabase → Connect → **Session pooler** |
 | `SCHEDULE_PASSCODE` | no, on purpose | **yes — required** | the passcode typed into the Schedule panel |
 | `CRON_SECRET` | no | yes | **also** a GitHub Actions repo secret, must match |
@@ -375,18 +376,39 @@ directly in code.
     *pattern*; each pattern stores, per stop, the nearest shape vertex
     (forward search) so a ride is cut from the real line shape. Platforms take
     their parent station's name. Loaded lazily on first transit request.
-  - **Expiry**: feeds end around 2027-01-10; `/api/health` reports
-    `transit_data_until`, and past it the planner answers "expired" instead of
-    planning on stale schedules. Rerun the build and commit to refresh.
-  - **Search (direct rides only)**: stops within 800 m straight-line of each
-    end (walk estimate ×1.3 detour at 1.25 m/s), every pattern passing a stop
-    near the origin and later one near the destination, first trip on an
-    active service after you can walk there (or, `arrive_by`, the last that
-    arrives in time), including yesterday's after-midnight trips (GTFS
-    `25:10:00`). Best per line, top three. Rides that beat walking the whole
-    way by under 3 minutes are dropped; when nothing is left, the error says
-    walking is about as fast. Errors are specific (no stop near, needs a
-    transfer, expired) and the Transit tab shows a short form of them.
+  - **Refresh**: `.github/workflows/transit-schedules.yml` rebuilds nightly
+    (3:41 AM PT) and commits only when the output changed — the build is
+    byte-reproducible (gzip with `mtime=0`, no filename), so an unchanged
+    feed is no diff. The push redeploys Render. Before committing it runs
+    `gtfs_build.py --check`: every operator present, a Powell → Ferry
+    Building trip still plans, schedules not within 14 days of expiring. A
+    red run leaves the committed schedules live. `transit_data/feeds.json`
+    lists each agency's feed version and end date. Needs the
+    `TRAFFIC_511_TOKEN` repo secret.
+  - **Expiry**: `/api/health` reports `transit_data_until`; past it the
+    planner answers "expired" instead of planning on stale schedules.
+  - **Search**: stops within 800 m straight-line of each end (walk estimate
+    ×1.3 detour at 1.25 m/s). Two searches, ranked together by `_choose`:
+    - `_direct`: every pattern passing a stop near the origin and later one
+      near the destination; first trip after you can walk there (or, for
+      `arrive_by`, the last that arrives in time). Gives one option per line.
+    - `_raptor`: round-based RAPTOR, up to `MAX_RIDES` = 3 (two transfers),
+      `CHANGE_S` = 2 min to connect, walking transfers between stops within
+      300 m (precomputed per stop at load). Per-day trip lists
+      (`_day_trips`, today's plus yesterday's after-midnight trips shifted)
+      are sorted by first-stop time; the data was checked to have **no
+      overtaking within a day**, which is what makes binary-searching the
+      next trip valid. Arrive-by runs the same code backwards through
+      `_View`, which reverses stop order and negates times. A walk label never
+      overwrites a stop a ride reached in the same round (unwinding expects a
+      ride there). RAPTOR can also return a single ride whose walk passes a
+      nearby stop on the way to a farther station, which `_direct` misses.
+    - Transfers are shown only if they beat the best single ride by 5 min (or
+      there is none). Rides that beat walking the whole way by under 3 min are
+      dropped; when nothing is left, the error says walking is about as fast.
+      Back-to-back walks merge into one. Errors are specific (no stop near,
+      no route, expired) and the Transit tab shows a short form. The page
+      inserts a "Change at … · N min wait" row between consecutive rides.
   - **Walks** use real Mapbox walking routes for the options shown (cached),
     straight lines if Mapbox fails.
   - Output keeps one shape for page, email and brief: segments of `walk` /

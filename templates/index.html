@@ -991,7 +991,16 @@
             <span class="gap"></span>${o.leave_text || ""} → ${o.arrive_text || ""} · ${formatDuration(o.duration_s)}
           </button>`).join("") + `</div>`;
       }
-      html += `<ol class="tp-steps">` + plan.segments.map(seg => {
+      html += `<ol class="tp-steps">` + plan.segments.map((seg, idx) => {
+        // Changing lines at the same stop: say so, and how long the wait is.
+        const prev = plan.segments[idx - 1];
+        let change = "";
+        if (seg.kind === "transit" && prev && prev.kind === "transit") {
+          const wait = Math.round((new Date(seg.depart) - new Date(prev.arrive)) / 60000);
+          change = `<li class="tp-step"><span class="tp-badge walk">change</span><div>
+            <div class="tp-t">Change at ${escapeHtml(seg.from_stop || "")}</div>
+            <div class="tp-sub">${wait > 0 ? `${wait} min wait` : "Connect right away"}</div></div></li>`;
+        }
         if (seg.kind === "walk") {
           return `<li class="tp-step"><span class="tp-badge walk">walk</span><div>
             <div class="tp-t">Walk ${formatDuration(seg.duration_s)}</div>
@@ -1001,7 +1010,7 @@
         // "Powell-Hyde Cable Car", not "Powell-Hyde Cable Car cable car".
         const vehicle = (seg.vehicle || "").toLowerCase();
         const kind = vehicle && !name.toLowerCase().includes(vehicle) ? ` ${vehicle}` : "";
-        return `<li class="tp-step">${lineBadge(seg)}<div>
+        return `${change}<li class="tp-step">${lineBadge(seg)}<div>
           <div class="tp-t">${escapeHtml(name.trim())}${escapeHtml(kind)}${seg.headsign ? ` toward ${escapeHtml(seg.headsign)}` : ""}</div>
           <div class="tp-sub">Board at <b>${escapeHtml(seg.from_stop || "")}</b>${seg.depart_text ? ` · ${seg.depart_text}` : ""}</div>
           <div class="tp-sub">${seg.stops ? `${seg.stops} stop${seg.stops === 1 ? "" : "s"} · ` : ""}get off at <b>${escapeHtml(seg.to_stop || "")}</b>${seg.arrive_text ? ` · ${seg.arrive_text}` : ""}</div>

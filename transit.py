@@ -6,23 +6,29 @@ into `transit_data/` by gtfs_build.py. Open data can be drawn on any map,
 unlike Google's Routes API, whose terms forbid showing its results on or near
 a non-Google map — which this Mapbox app is.
 
-**What it plans today: direct rides.** Walk to a stop, ride one line, walk to
-the destination. No transfers yet. That covers most trips inside San
-Francisco; a trip that needs a change of line comes back as "no direct ride"
-rather than a wrong answer.
+Two searches run side by side:
 
-How a search works:
+**Direct rides** (`_direct`) — walk to a stop, ride one line, walk to the
+destination. It looks at every line that passes a stop near home and later a
+stop near the destination, so it can offer one option per line.
 
-1. Find every stop within a short walk of home and of the destination.
-2. Find every *pattern* (a line's run through a fixed list of stops) that
-   passes a stop near home and later a stop near the destination.
-3. For each, find the first trip running today that leaves that stop after
-   you can walk there — or, for "arrive by", the last trip that gets you in
-   on time.
-4. Keep the best option per line, earliest arrival first.
+**Transfers** (`_raptor`) — RAPTOR, the round-based algorithm transit
+planners use. Round 1 finds the earliest you can reach every stop with one
+ride; round 2 boards again from everything round 1 reached, and so on, up to
+`MAX_RIDES`. Between rounds you may walk to a nearby stop (BART Powell to the
+Muni Metro platform) and you need `CHANGE_S` to make a connection. Each round
+keeps a trip only if it beats every earlier round, so it returns at most one
+journey per number of rides — e.g. a direct ride and a faster one with a
+transfer.
 
-Walking times are estimated from straight-line distance for the search, then
-replaced with real Mapbox walking routes for the options actually shown.
+"Arrive by" runs the same search backwards: from the destination, the latest
+you can leave each stop and still make it. Rather than a second copy of the
+algorithm, the backward search runs the forward one on mirrored data — stop
+order reversed and times negated — so "latest departure" becomes "earliest
+arrival".
+
+Walking is estimated from straight-line distance during the search, then
+replaced with real Mapbox walking routes for the journeys actually shown.
 
 Schedules only: live delays are not included yet.
 """
@@ -49,16 +55,21 @@ _PACIFIC = tz.gettz("America/Los_Angeles")
 _WALK_URL = "https://api.mapbox.com/directions/v5/mapbox/walking/{},{};{},{}"
 
 MAX_WALK_M = 800          # straight-line reach to a stop, about a 12-minute walk
+TRANSFER_M = 300          # walking between stops to change lines
 WALK_SPEED_MPS = 1.25     # an unhurried pace
 DETOUR = 1.3              # streets are longer than a straight line
+CHANGE_S = 2 * 60         # time to make a connection
+MAX_RIDES = 3             # at most two transfers
 SEARCH_WINDOW_S = 3 * 3600  # don't offer a ride hours away
 WORTH_RIDING_S = 3 * 60     # a ride must beat walking the whole way by this much
+TRANSFER_WORTH_S = 5 * 60   # a transfer must save this much over a direct ride
 
 _CACHE_TTL_S = 120
 _cache: dict = {}
 _walk_cache: dict = {}
 _lock = threading.Lock()
 _data: dict | None = None
+_INF = float("inf")
 
 # What riders call each GTFS route_type.
 _VEHICLE = {0: "Light rail", 1: "Train", 2: "Train", 3: "Bus", 4: "Ferry",
@@ -105,7 +116,13 @@ def _load() -> dict | None:
         for svc in index["services"]:
             svc["add"], svc["remove"] = set(svc["add"]), set(svc["remove"])
 
-        _data = {**index, "times": times, "at_stop": at_stop, "grid": grid, "active": {}}
+        _data = {**index, "times": times, "at_stop": at_stop, "grid": grid,
+                 "active": {}, "day_trips": {}}
+        # Walking connections between nearby stops, for changing lines.
+        _data["walks"] = [
+            [(n, w) for n, w in _stops_near(_data, lat, lon, TRANSFER_M).items() if n != s]
+            for s, (_, lat, lon) in enumerate(index["stops"])
+        ]
         return _data
 
 
@@ -136,6 +153,33 @@ def _active_services(data: dict, day: date) -> set[int]:
     return active
 
 
+def _day_trips(data: dict, p: int, day: date) -> list[tuple[int, int]]:
+    """The trips of pattern `p` running on `day`, as (offset into times,
+    shift), earliest first. Includes yesterday's trips that run past midnight
+    (GTFS writes 12:40 AM on yesterday's schedule as 24:40:00), shifted by a
+    day. Within one day's trips no trip overtakes another on any line —
+    checked against the data — which is what makes binary search valid."""
+    by_day = data["day_trips"]
+    if day not in by_day:
+        if len(by_day) > 3:
+            by_day.clear()
+        by_day[day] = {}
+    cache = by_day[day]
+    if p in cache:
+        return cache[p]
+    times, pat = data["times"], data["patterns"][p]
+    last = len(pat["stops"]) - 1
+    found = []
+    for service_day, shift in ((day, 0), (day - timedelta(days=1), 86_400)):
+        active = _active_services(data, service_day)
+        for svc, off in zip(pat["svc"], pat["off"]):
+            if svc in active and times[off + last] >= shift:
+                found.append((times[off] - shift, off, shift))
+    found.sort()
+    cache[p] = [(off, shift) for _, off, shift in found]
+    return cache[p]
+
+
 # ---------------------------------------------------------------------------
 # Geometry
 # ---------------------------------------------------------------------------
@@ -146,8 +190,8 @@ def _meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return math.hypot(dx, dy)
 
 
-def _stops_near(data: dict, lat: float, lon: float) -> dict[int, float]:
-    """Stops within walking reach, mapped to the estimated walk in seconds."""
+def _stops_near(data: dict, lat: float, lon: float, reach_m: float = MAX_WALK_M) -> dict[int, float]:
+    """Stops within `reach_m`, mapped to the estimated walk in seconds."""
     out = {}
     cy, cx = int(lat * 100), int(lon * 100)
     for dy in (-1, 0, 1):
@@ -155,7 +199,7 @@ def _stops_near(data: dict, lat: float, lon: float) -> dict[int, float]:
             for s in data["grid"].get((cy + dy, cx + dx), ()):
                 _, slat, slon = data["stops"][s]
                 d = _meters(lat, lon, slat, slon)
-                if d <= MAX_WALK_M:
+                if d <= reach_m:
                     out[s] = d * DETOUR / WALK_SPEED_MPS
     return out
 
@@ -181,7 +225,7 @@ def _walk(frm: tuple[float, float], to: tuple[float, float], estimate_s: float) 
     straight = {"duration_s": round(estimate_s), "distance_m": round(_meters(frm[0], frm[1], to[0], to[1]) * DETOUR),
                 "coords": [[frm[1], frm[0]], [to[1], to[0]]]}
     token = os.environ.get("MAPBOX_TOKEN")
-    if not token:
+    if not token or straight["distance_m"] < 30:
         return straight
     try:
         resp = requests.get(_WALK_URL.format(frm[1], frm[0], to[1], to[0]),
@@ -200,8 +244,12 @@ def _walk(frm: tuple[float, float], to: tuple[float, float], estimate_s: float) 
 
 
 # ---------------------------------------------------------------------------
-# Search
+# Search: direct rides
 # ---------------------------------------------------------------------------
+#
+# A journey, whichever search found it, is a list of legs:
+#   ("walk", from_stop or None, to_stop or None, estimate_s)   None = origin/destination
+#   ("ride", pattern, offset, shift, board_pos, alight_pos)
 
 def _candidates(data: dict, near_o: dict, near_d: dict):
     """(pattern, board position, walk there, alight position, walk after) for
@@ -219,39 +267,216 @@ def _candidates(data: dict, near_o: dict, near_d: dict):
                     yield p, i, walk_o, j, walk_d
 
 
-def _search(data: dict, day: date, target_s: int, arrive_by: bool,
+def _direct(data: dict, day: date, target_s: int, arrive_by: bool,
             near_o: dict, near_d: dict) -> list[dict]:
-    """Best trip per pattern. `target_s` is seconds after `day`'s midnight:
-    the earliest you can leave, or (arrive_by) the latest you can arrive."""
+    """The best direct ride per pattern. `target_s` is seconds after `day`'s
+    midnight: the earliest you can leave, or (arrive_by) the latest you can
+    arrive."""
     times, best = data["times"], {}
-    # Today's trips, plus yesterday's that run past midnight (GTFS writes a
-    # 12:40 AM trip on yesterday's schedule as 24:40:00).
-    days = [(day, 0), (day - timedelta(days=1), 86_400)]
     for p, i, walk_o, j, walk_d in _candidates(data, near_o, near_d):
         pat = data["patterns"][p]
-        n = len(pat["stops"])
-        for service_day, shift in days:
-            active = _active_services(data, service_day)
-            for svc, off in zip(pat["svc"], pat["off"]):
-                if svc not in active:
+        for off, shift in _day_trips(data, p, day):
+            dep, arr = times[off + i] - shift, times[off + j] - shift
+            leave, arrive = dep - walk_o, arr + walk_d
+            if arrive_by:
+                if arrive > target_s or leave < target_s - SEARCH_WINDOW_S:
                     continue
-                dep, arr = times[off + i] - shift, times[off + j] - shift
-                leave, arrive = dep - walk_o, arr + walk_d
-                if arrive_by:
-                    if arrive > target_s or leave < target_s - SEARCH_WINDOW_S:
-                        continue
-                    better = p not in best or leave > best[p]["leave"]
-                else:
-                    if leave < target_s or leave > target_s + SEARCH_WINDOW_S:
-                        continue
-                    better = p not in best or arrive < best[p]["arrive"] or (
-                        arrive == best[p]["arrive"] and leave > best[p]["leave"])
-                if better:
-                    best[p] = {"pattern": p, "i": i, "j": j, "dep": dep, "arr": arr,
-                               "walk_o": walk_o, "walk_d": walk_d,
-                               "leave": leave, "arrive": arrive, "n": n}
+                better = p not in best or leave > best[p]["leave"]
+            else:
+                if leave < target_s or leave > target_s + SEARCH_WINDOW_S:
+                    continue
+                better = p not in best or arrive < best[p]["arrive"] or (
+                    arrive == best[p]["arrive"] and leave > best[p]["leave"])
+            if better:
+                best[p] = {
+                    "leave": leave, "arrive": arrive, "rides": 1,
+                    "lines": (pat["route"],),
+                    "legs": [("walk", None, pat["stops"][i], walk_o),
+                             ("ride", p, off, shift, i, j),
+                             ("walk", pat["stops"][j], None, walk_d)],
+                }
     return list(best.values())
 
+
+# ---------------------------------------------------------------------------
+# Search: transfers (RAPTOR)
+# ---------------------------------------------------------------------------
+
+class _View:
+    """One pattern's trips as the search sees them. Forward, it is the real
+    timetable. Backward, the stop order is reversed and every time negated,
+    so the latest departure becomes the earliest "arrival" and the same
+    forward code answers an arrive-by question."""
+
+    __slots__ = ("stops", "trips", "times", "n", "forward")
+
+    def __init__(self, data: dict, p: int, day: date, forward: bool):
+        pat = data["patterns"][p]
+        trips = _day_trips(data, p, day)
+        self.stops = pat["stops"] if forward else pat["stops"][::-1]
+        self.trips = trips if forward else trips[::-1]
+        self.times, self.n, self.forward = data["times"], len(pat["stops"]), forward
+
+    def at(self, t: int, i: int) -> int:
+        off, shift = self.trips[t]
+        if self.forward:
+            return self.times[off + i] - shift
+        return -(self.times[off + self.n - 1 - i] - shift)
+
+    def first_from(self, i: int, ready: float) -> int:
+        """Index of the first trip leaving position `i` at or after `ready`."""
+        lo, hi = 0, len(self.trips)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self.at(mid, i) < ready:
+                lo = mid + 1
+            else:
+                hi = mid
+        return lo
+
+
+def _raptor(data: dict, day: date, starts: dict[int, float], ends: dict[int, float],
+            forward: bool) -> list[tuple[float, list]]:
+    """Round-based search. `starts` maps stops to the (search-direction) time
+    you can be there; `ends` maps stops to the walk from there to the goal.
+    Returns (total, legs-in-search-order) for each round that improved on
+    every round before it."""
+    best: dict[int, tuple[float, int]] = {s: (t, 0) for s, t in starts.items()}
+    rounds: list[dict] = [{s: ("start",) for s in starts}]
+    marked, results, best_total = set(starts), [], _INF
+    views: dict[int, _View] = {}
+
+    for k in range(1, MAX_RIDES + 1):
+        snap = dict(best)
+        queue: dict[int, int] = {}
+        for s in marked:
+            for p, pos in data["at_stop"][s]:
+                n = len(data["patterns"][p]["stops"])
+                pos = pos if forward else n - 1 - pos
+                if pos < queue.get(p, 1 << 30):
+                    queue[p] = pos
+        slack = 0 if k == 1 else CHANGE_S
+        parents, improved = {}, {}
+
+        for p, start in queue.items():
+            view = views.get(p) or views.setdefault(p, _View(data, p, day, forward))
+            if not view.trips:
+                continue
+            trip, board = None, None
+            for i in range(start, len(view.stops)):
+                s = view.stops[i]
+                if trip is not None:
+                    arr = view.at(trip, i)
+                    if arr < best.get(s, (_INF,))[0] and arr < best_total:
+                        best[s] = (arr, k)
+                        improved[s] = arr
+                        parents[s] = ("ride", p, trip, board[0], i, board[1])
+                label = snap.get(s)
+                if label is not None and label[1] == k - 1:
+                    ready = label[0] + slack
+                    if trip is None or ready <= view.at(trip, i):
+                        t = view.first_from(i, ready)
+                        if t < len(view.trips) and (trip is None or t < trip):
+                            if abs(view.at(t, i) - ready) <= SEARCH_WINDOW_S:
+                                trip, board = t, (i, s)
+
+        # Walk to nearby stops from everything a ride just reached. A stop a
+        # ride reached this round keeps that ride as its label: unwinding a
+        # walk expects to find a ride at the stop it started from.
+        rode = dict(improved)
+        for s, arr in rode.items():
+            for n, w in data["walks"][s]:
+                t = arr + w
+                if n not in rode and t < best.get(n, (_INF,))[0] and t < best_total:
+                    best[n] = (t, k)
+                    improved[n] = t
+                    parents[n] = ("walk", s, w)
+        rounds.append(parents)
+        marked = set(improved)
+
+        finish = min(((improved[s] + w, s) for s, w in ends.items() if s in improved), default=None)
+        if finish and finish[0] < best_total:
+            best_total = finish[0]
+            results.append((finish[0], _unwind(rounds, views, k, finish[1], ends[finish[1]])))
+        if not marked:
+            break
+    return results
+
+
+def _unwind(rounds: list[dict], views: dict, k: int, stop: int, walk_end: float) -> list:
+    """Follow parent labels back from the final stop to the start, giving
+    legs in search order (ride legs carry search-direction positions)."""
+    legs = [("walk", stop, None, walk_end)]
+    while k > 0:
+        label = rounds[k][stop]
+        if label[0] == "walk":
+            _, frm, w = label
+            legs.append(("walk", frm, stop, w))
+            stop = frm
+            label = rounds[k][stop]
+        _, p, trip, i, j, board_stop = label
+        legs.append(("ride", p, views[p], trip, i, j))
+        stop, k = board_stop, k - 1
+    legs.append(("walk", None, stop, None))
+    legs.reverse()
+    return legs
+
+
+def _transfers(data: dict, day: date, target_s: int, arrive_by: bool,
+               near_o: dict, near_d: dict) -> list[dict]:
+    """RAPTOR's journeys, in the same shape `_direct` returns. Mostly ones
+    with transfers, but a single ride can appear too: one whose walk passes a
+    nearby stop on the way to a station farther out, which `_direct` (stops
+    within reach only) cannot see."""
+    if arrive_by:
+        starts = {s: -(target_s - w) for s, w in near_d.items()}
+        found = _raptor(data, day, starts, near_o, forward=False)
+    else:
+        starts = {s: target_s + w for s, w in near_o.items()}
+        found = _raptor(data, day, starts, near_d, forward=True)
+
+    out = []
+    for _, search_legs in found:
+        legs = _real_legs(data, search_legs, arrive_by, near_o, near_d)
+        rides = [leg for leg in legs if leg[0] == "ride"]
+        times = data["times"]
+        first, last = rides[0], rides[-1]
+        dep = times[first[2] + first[4]] - first[3]
+        arr = times[last[2] + last[5]] - last[3]
+        out.append({
+            "leave": dep - legs[0][3], "arrive": arr + legs[-1][3], "rides": len(rides),
+            "lines": tuple(data["patterns"][r[1]]["route"] for r in rides),
+            "legs": legs,
+        })
+    return out
+
+
+def _real_legs(data: dict, search_legs: list, backward: bool, near_o: dict, near_d: dict) -> list:
+    """Turn search-order legs into real-world order with real positions."""
+    legs = []
+    for leg in search_legs:
+        if leg[0] == "walk":
+            legs.append(leg)
+            continue
+        _, p, view, trip, i, j = leg
+        off, shift = view.trips[trip]
+        if view.forward:
+            legs.append(("ride", p, off, shift, i, j))
+        else:
+            # Backward, the search boarded at the later real stop.
+            legs.append(("ride", p, off, shift, view.n - 1 - j, view.n - 1 - i))
+    if backward:
+        legs = [(l[0], l[2], l[1], l[3]) if l[0] == "walk" else l for l in reversed(legs)]
+    # Fill the walking estimates at the two ends from the search inputs.
+    first, last = legs[0], legs[-1]
+    legs[0] = ("walk", None, first[2], near_o[first[2]])
+    legs[-1] = ("walk", last[1], None, near_d[last[1]])
+    return legs
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
 
 def _line_names(route: dict) -> tuple[str, str]:
     """(badge text, full name). BART and Caltrain have no rider-facing short
@@ -273,59 +498,86 @@ def _clock(moment: datetime | None) -> str | None:
     return moment.strftime("%I:%M %p").lstrip("0") if moment else None
 
 
-def _build(data: dict, day: date, hit: dict, origin, destination) -> dict:
-    pat = data["patterns"][hit["pattern"]]
-    route = data["routes"][pat["route"]]
-    stops = data["stops"]
-    board, alight = stops[pat["stops"][hit["i"]]], stops[pat["stops"][hit["j"]]]
+def _point(data: dict, stop: int | None, fallback: tuple[float, float]) -> tuple[float, float]:
+    return fallback if stop is None else (data["stops"][stop][1], data["stops"][stop][2])
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        w1 = pool.submit(_walk, origin, (board[1], board[2]), hit["walk_o"])
-        w2 = pool.submit(_walk, (alight[1], alight[2]), destination, hit["walk_d"])
-        walk_in, walk_out = w1.result(), w2.result()
 
-    short, full = _line_names(route)
-    coords = _ride_coords(data, pat, hit["i"], hit["j"])
-    depart, arrive = _at(day, hit["dep"]), _at(day, hit["arr"])
-    leave = depart - timedelta(seconds=walk_in["duration_s"])
-    done = arrive + timedelta(seconds=walk_out["duration_s"])
-    ride = {
-        "kind": "transit", "line": short, "line_name": full,
-        "color": route["color"], "text_color": route["text_color"],
-        "vehicle": "Streetcar" if short in _HISTORIC_STREETCARS and route["agency"] == "Muni"
-                   else _VEHICLE.get(route["type"], "Transit"),
-        # Muni's feed writes apostrophes as backticks ("Fisherman`s Wharf").
-        "agency": route["agency"], "headsign": (pat["headsign"] or "").replace("`", "'") or None,
-        "from_stop": board[0], "to_stop": alight[0], "stops": hit["j"] - hit["i"],
-        "depart": depart.isoformat(), "arrive": arrive.isoformat(),
-        "depart_text": _clock(depart), "arrive_text": _clock(arrive),
-        "duration_s": hit["arr"] - hit["dep"],
-        "distance_m": round(sum(_meters(a[1], a[0], b[1], b[0]) for a, b in zip(coords, coords[1:]))),
-        "coords": coords,
-    }
-    segments = [
-        {"kind": "walk", **walk_in, "to": board[0]},
-        ride,
-        {"kind": "walk", **walk_out, "to": None},
-    ]
+def _build(data: dict, day: date, journey: dict, origin, destination) -> dict:
+    """A journey as the page, the email and the brief read it."""
+    times, stops = data["times"], data["stops"]
+    # Back-to-back walks (home → a nearby stop → on to a station) are one walk
+    # to the rider, and one Mapbox route is more accurate than two.
+    legs = []
+    for leg in journey["legs"]:
+        if leg[0] == "walk" and legs and legs[-1][0] == "walk":
+            legs[-1] = ("walk", legs[-1][1], leg[2], legs[-1][3] + leg[3])
+        else:
+            legs.append(leg)
+
+    walks = [leg for leg in legs if leg[0] == "walk"]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_walk, _point(data, w[1], origin), _point(data, w[2], destination), w[3])
+                   for w in walks]
+        walked = iter([f.result() for f in futures])
+
+    segments = []
+    for leg in legs:
+        if leg[0] == "walk":
+            done = next(walked)
+            if leg[1] is not None and leg[2] is not None and leg[1] == leg[2]:
+                continue                                    # changing at the same stop
+            segments.append({"kind": "walk", **done,
+                             "to": stops[leg[2]][0] if leg[2] is not None else None})
+            continue
+        _, p, off, shift, i, j = leg
+        pat = data["patterns"][p]
+        route = data["routes"][pat["route"]]
+        board, alight = stops[pat["stops"][i]], stops[pat["stops"][j]]
+        short, full = _line_names(route)
+        coords = _ride_coords(data, pat, i, j)
+        depart = _at(day, times[off + i] - shift)
+        arrive = _at(day, times[off + j] - shift)
+        segments.append({
+            "kind": "transit", "line": short, "line_name": full,
+            "color": route["color"], "text_color": route["text_color"],
+            "vehicle": "Streetcar" if short in _HISTORIC_STREETCARS and route["agency"] == "Muni"
+                       else _VEHICLE.get(route["type"], "Transit"),
+            # Muni's feed writes apostrophes as backticks ("Fisherman`s Wharf").
+            "agency": route["agency"], "headsign": (pat["headsign"] or "").replace("`", "'") or None,
+            "from_stop": board[0], "to_stop": alight[0], "stops": j - i,
+            "depart": depart.isoformat(), "arrive": arrive.isoformat(),
+            "depart_text": _clock(depart), "arrive_text": _clock(arrive),
+            "duration_s": int((arrive - depart).total_seconds()),
+            "distance_m": round(sum(_meters(a[1], a[0], b[1], b[0]) for a, b in zip(coords, coords[1:]))),
+            "coords": coords,
+        })
+
+    rides = [s for s in segments if s["kind"] == "transit"]
+    # Real walking times replace the estimates at both ends.
+    first_walk = segments[0]["duration_s"] if segments[0]["kind"] == "walk" else 0
+    last_walk = segments[-1]["duration_s"] if segments[-1]["kind"] == "walk" else 0
+    leave = datetime.fromisoformat(rides[0]["depart"]) - timedelta(seconds=first_walk)
+    done = datetime.fromisoformat(rides[-1]["arrive"]) + timedelta(seconds=last_walk)
     return {
         "duration_s": round((done - leave).total_seconds()),
         "distance_m": sum(s["distance_m"] for s in segments),
         "leave_at": leave.isoformat(), "leave_text": _clock(leave),
         "arrive_at": done.isoformat(), "arrive_text": _clock(done),
-        "lines": [short or route["agency"]],
+        "transfers": len(rides) - 1,
+        "lines": [r["line"] or r["agency"] for r in rides],
         "segments": segments,
     }
 
 
 def plan(origin: tuple[float, float], destination: tuple[float, float],
          arrive_by: str | None = None, alternatives: bool = True) -> dict:
-    """Direct-ride transit options between two (lat, lon) points.
+    """Transit options between two (lat, lon) points: direct rides and trips
+    with up to two transfers.
 
     `arrive_by` is a naive Pacific time ("2026-10-20T08:30"); without it the
     trip leaves now. Always returns `routes` (possibly empty) and, when empty,
-    an `error` that says why — so "no data", "too far from a stop" and "needs
-    a transfer" are distinguishable instead of all looking like nothing.
+    an `error` that says why — so "no data", "too far from a stop" and "no
+    route" are distinguishable instead of all looking like nothing.
     """
     data = _load()
     if data is None:
@@ -356,26 +608,47 @@ def plan(origin: tuple[float, float], destination: tuple[float, float],
     elif not near_d:
         result = {"routes": [], "error": "no Muni, BART or Caltrain stop within a short walk of the destination"}
     else:
-        # A ride that barely beats walking (one stop down the street) isn't
-        # worth offering; if nothing clears that bar, say walking wins.
-        walk_all = _meters(*origin, *destination) * DETOUR / WALK_SPEED_MPS
-        hits = [h for h in _search(data, day, target, bool(arrive_by), near_o, near_d)
-                if h["arrive"] - h["leave"] <= walk_all - WORTH_RIDING_S]
-        # Arriving by a deadline, the best option is the one you can leave
-        # latest for; leaving now, it's the one that gets you there first.
-        rank = ((lambda h: (-h["leave"], h["arrive"])) if arrive_by
-                else (lambda h: (h["arrive"], -h["leave"])))
-        # One option per line: the N in two nearby patterns is still the N.
-        per_line: dict[int, dict] = {}
-        for h in sorted(hits, key=rank):
-            per_line.setdefault(data["patterns"][h["pattern"]]["route"], h)
-        ranked = sorted(per_line.values(), key=rank)[: 3 if alternatives else 1]
-        if not ranked and walk_all <= 45 * 60:
-            result = {"routes": [], "error": f"walking is about as fast (around {round(walk_all / 60)} min)"}
-        elif not ranked:
-            result = {"routes": [], "error": "no direct ride found; trips that need a transfer aren't supported yet"}
-        else:
-            result = {"routes": [_build(data, day, h, origin, destination) for h in ranked]}
+        result = {"routes": [_build(data, day, j, origin, destination)
+                             for j in _choose(data, day, target, bool(arrive_by), near_o, near_d,
+                                              origin, destination, 3 if alternatives else 1)]}
+        if not result["routes"]:
+            walk_all = _meters(*origin, *destination) * DETOUR / WALK_SPEED_MPS
+            result["error"] = (f"walking is about as fast (around {round(walk_all / 60)} min)"
+                               if walk_all <= 45 * 60 else
+                               "no route found with up to two transfers in the next few hours")
 
     _cache[cache_key] = (monotonic(), result)
     return result
+
+
+def _choose(data, day, target, arrive_by, near_o, near_d, origin, destination, limit) -> list[dict]:
+    """Rank direct rides and transfer journeys together and pick the few worth showing."""
+    # Arriving by a deadline, the best journey is the one you can leave latest
+    # for; leaving now, it's the one that gets you there first. Fewer rides
+    # break ties.
+    rank = ((lambda j: (-j["leave"], j["arrive"], j["rides"])) if arrive_by
+            else (lambda j: (j["arrive"], j["rides"], -j["leave"])))
+    # A ride that barely beats walking the whole way isn't worth offering.
+    walk_all = _meters(*origin, *destination) * DETOUR / WALK_SPEED_MPS
+    worth = lambda j: j["arrive"] - j["leave"] <= walk_all - WORTH_RIDING_S
+
+    found = [j for j in _transfers(data, day, target, arrive_by, near_o, near_d) if worth(j)]
+    singles = [j for j in _direct(data, day, target, arrive_by, near_o, near_d) if worth(j)]
+    singles += [j for j in found if j["rides"] == 1]
+    # One option per line: the N in two nearby patterns is still the N.
+    per_line: dict = {}
+    for j in sorted(singles, key=rank):
+        per_line.setdefault(j["lines"], j)
+    options = sorted(per_line.values(), key=rank)
+
+    # A transfer is only worth it if it clearly beats the best direct ride,
+    # or there is no direct ride at all.
+    best_direct = options[0] if options else None
+    for j in sorted((j for j in found if j["rides"] > 1), key=rank):
+        if best_direct is None:
+            options.append(j)
+        elif arrive_by and j["leave"] - best_direct["leave"] >= TRANSFER_WORTH_S:
+            options.append(j)
+        elif not arrive_by and best_direct["arrive"] - j["arrive"] >= TRANSFER_WORTH_S:
+            options.append(j)
+    return sorted(options, key=rank)[:limit]

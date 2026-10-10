@@ -4,7 +4,11 @@ Build the transit schedule index from 511 SF Bay GTFS feeds.
 Run this to (re)generate `transit_data/`, then commit the result:
 
     set -a && . ./.env && set +a && ./venv/bin/python gtfs_build.py
-    ./venv/bin/python gtfs_build.py --from-dir path/to/unzipped   # offline
+    ./venv/bin/python gtfs_build.py --from-dir path/to/zips    # offline
+    ./venv/bin/python gtfs_build.py --check                    # verify the output
+
+Normally nobody runs it by hand: .github/workflows/transit-schedules.yml
+rebuilds nightly and commits only when 511 has published new schedules.
 
 GTFS is the open format every transit agency publishes: stops, lines, the
 shape of each line, and every scheduled trip. Muni alone is about 1.3 million
@@ -185,6 +189,14 @@ def load_feed(op: str, z: zipfile.ZipFile, index: dict, times: array) -> None:
           file=sys.stderr)
 
 
+def _write_gz(path: Path, payload: bytes) -> None:
+    """Gzip with no timestamp or filename in the header, so the same schedules
+    always produce byte-identical files. The nightly refresh commits only
+    when the output changes; a timestamp would make every night a change."""
+    with open(path, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as fh:
+        fh.write(payload)
+
+
 def fetch(op: str, token: str) -> zipfile.ZipFile:
     resp = requests.get(_FEED_URL, params={"api_key": token, "operator_id": op}, timeout=120)
     resp.raise_for_status()
@@ -195,7 +207,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--operators", default=",".join(OPERATORS))
     parser.add_argument("--from-dir", help="read <dir>/<OP>.zip instead of downloading")
+    parser.add_argument("--check", action="store_true",
+                        help="verify the built data instead of building it")
     args = parser.parse_args()
+    if args.check:
+        sys.exit(check(args.operators.split(",")))
 
     token = os.environ.get("TRAFFIC_511_TOKEN")
     if not args.from_dir and not token:
@@ -210,12 +226,42 @@ def main() -> None:
     if sys.byteorder != "little":
         times.byteswap()                      # stored little-endian regardless of build machine
     OUT_DIR.mkdir(exist_ok=True)
-    with gzip.open(OUT_DIR / "index.json.gz", "wt", encoding="utf-8") as fh:
-        json.dump(index, fh, separators=(",", ":"))
-    with gzip.open(OUT_DIR / "times.bin.gz", "wb") as fh:
-        fh.write(times.tobytes())
+    _write_gz(OUT_DIR / "index.json.gz", json.dumps(index, separators=(",", ":")).encode("utf-8"))
+    _write_gz(OUT_DIR / "times.bin.gz", times.tobytes())
+    # A small readable summary, so a refresh commit shows at a glance which
+    # agency published what, and until when it runs.
+    (OUT_DIR / "feeds.json").write_text(json.dumps(index["feeds"], indent=2) + "\n")
     sizes = {p.name: f"{p.stat().st_size / 1e6:.1f} MB" for p in OUT_DIR.iterdir()}
     print(f"wrote {sizes}; {len(times)} stop times", file=sys.stderr)
+
+
+def check(operators: list[str], warn_days: int = 14) -> int:
+    """Sanity-check transit_data/ before it is committed. Returns an exit code.
+
+    Fails when an agency is missing, a known trip no longer plans, or the
+    schedules run out within `warn_days` — the last being the case where 511
+    hasn't published a newer feed yet and someone should look.
+    """
+    import transit
+    from datetime import date, timedelta
+
+    problems = []
+    data = transit._load()
+    if data is None:
+        return print("no transit data built", file=sys.stderr) or 1
+    loaded = {f["operator"] for f in data["feeds"]}
+    problems += [f"{op} missing from the build" for op in operators if op not in loaded]
+    until = transit.data_until()
+    if until and date.fromisoformat(until) < date.today() + timedelta(days=warn_days):
+        problems.append(f"schedules expire {until}, within {warn_days} days, and 511 has nothing newer")
+    # Powell Station to the Ferry Building: served all day by BART and Muni Metro.
+    sample = transit.plan((37.7844, -122.4079), (37.7956, -122.3934), alternatives=False)
+    if not sample["routes"] and "walking" not in (sample.get("error") or ""):
+        problems.append(f"sample trip failed: {sample.get('error')}")
+    for p in problems:
+        print(f"::error::{p}", file=sys.stderr)
+    print("check ok" if not problems else f"{len(problems)} problem(s)", file=sys.stderr)
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

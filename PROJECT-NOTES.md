@@ -179,9 +179,27 @@ once, then only the times. When you ask for directions:
 3. For each, find the next trip running today that you can walk to in time.
 4. Keep the best option per line, fastest first.
 
-**What it doesn't do yet: transfers.** One line, door to door. That covers
-most trips inside San Francisco; a trip that needs a change of line says so
-rather than inventing an answer. Transfers are the natural next step.
+**Transfers.** Up to two changes of line — for example the 45 bus to 4th &
+King, then Caltrain to Palo Alto — with a "Change at 3rd St & Bryant St · 7
+min wait" line between rides. This uses **RAPTOR**, the algorithm real transit
+planners use, and the idea is simple enough to explain:
+
+- *Round 1:* from the stops near home, ride every line that passes them and
+  note the earliest you could reach every stop in the city with one ride.
+- *Round 2:* from every stop round 1 reached (plus a short walk to nearby
+  stops, and two minutes to make the connection), ride again. Note anywhere
+  you now reach earlier.
+- *Round 3:* once more. Stop there — three rides covers the Bay Area.
+
+Each round only keeps a trip if it beats every earlier round, so you see a
+transfer only when it actually saves time (at least five minutes over the best
+single ride). For "arrive by 9:00" the same search runs backwards from the
+destination — the code mirrors the timetable (reversed stops, negated times)
+instead of keeping a second copy of the algorithm.
+
+One check made it trustworthy: finding "the next bus" quickly assumes buses on
+a line never overtake each other within a day. That was tested against the
+real timetables before relying on it — zero overtakes on any line.
 
 **Why not Google, which was built first.** Google's Routes API was wired in,
 then removed before a key was ever set, because its terms forbid using it
@@ -202,15 +220,22 @@ it, not after.
   alert can say "Leave by 9:00 AM, take the N Judah from Powell" — the transit
   version of the leave-by time from the roadmap.
 
-**Two honest limits.** It won't offer a bus for one stop when walking is about
-as fast — it says so instead. And the schedules expire: the agencies publish
-new ones every few months (the current set runs to January 2027). The health
-check reports the date, and past it the planner says "expired" instead of
-quietly planning on old timetables.
+**It won't offer a bus for one stop** when walking is about as fast — it says
+so instead.
 
-**Not yet:** live delays and transfers. 511 publishes real-time arrivals and
-service alerts for every Bay Area operator, which is what would let an alert
-say "BART is running 15 minutes late."
+**The schedules refresh themselves.** The agencies publish new timetables
+every few months. Every night a GitHub Action downloads the latest from 511,
+rebuilds, checks the result (every agency present, a known trip still plans,
+nothing about to expire), and commits only if the timetables actually changed —
+which redeploys the site. The build is made byte-for-byte reproducible so an
+unchanged timetable produces no commit at all. If anything fails, the job goes
+red and the previous schedules stay live. And if 511 ever stops publishing, the
+job fails two weeks before the data expires, while the site keeps working.
+
+**Not yet:** live delays. 511 publishes real-time arrivals and service alerts
+for every Bay Area operator, which is what would let an alert say "BART is
+running 15 minutes late." Also not yet: AC Transit, SamTrans and the ferries,
+so Oakland's waterfront and much of the East Bay show "no stop near".
 
 ### Privacy, persistence, and plumbing
 Three fixes that came out of deploying it:
@@ -327,8 +352,9 @@ handles transfers and live delays. But its terms forbid using it near a
 non-Google map, so using it would mean either breaking those terms or
 replacing Mapbox, the custom dark map, with Google Maps. The planner runs on
 open data that can be drawn anywhere, costs nothing per request, and builds
-understanding of how transit routing actually works. The trade-off: direct
-rides only, for now, and schedules that need rebuilding a few times a year.
+understanding of how transit routing actually works. The trade-off: no live
+delays yet, three agencies rather than all of them, and a nightly job that has
+to keep the timetables current.
 
 ### Calendars over secret links, not "Sign in with Google"
 Google Calendar cannot be read with an API key — personal data requires OAuth,
