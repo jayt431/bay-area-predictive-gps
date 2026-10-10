@@ -621,7 +621,8 @@
     let currentDest = null;  // the destination currently routed to
 
     // Travel modes and the Mapbox Directions profile each routes with. Transit
-    // has no Mapbox profile; it comes from Google through /api/transit.
+    // has no Mapbox profile; it comes from our own planner over 511 schedule
+    // data, through /api/transit.
     const MODES = [
       { id: "drive", label: "Drive", profile: "driving", verb: "Drive", sim: "drive" },
       { id: "walk",  label: "Walk",  profile: "walking", verb: "Walk",  sim: "walk" },
@@ -997,12 +998,15 @@
             <div class="tp-sub">${miles(seg.distance_m)} mi to ${escapeHtml(seg.to || "your destination")}</div></div></li>`;
         }
         const name = seg.line_name && seg.line_name !== seg.line ? `${seg.line} ${seg.line_name}` : (seg.line || seg.line_name);
+        // "Powell-Hyde Cable Car", not "Powell-Hyde Cable Car cable car".
+        const vehicle = (seg.vehicle || "").toLowerCase();
+        const kind = vehicle && !name.toLowerCase().includes(vehicle) ? ` ${vehicle}` : "";
         return `<li class="tp-step">${lineBadge(seg)}<div>
-          <div class="tp-t">${escapeHtml(name)} ${escapeHtml((seg.vehicle || "").toLowerCase())}${seg.headsign ? ` toward ${escapeHtml(seg.headsign)}` : ""}</div>
+          <div class="tp-t">${escapeHtml(name.trim())}${escapeHtml(kind)}${seg.headsign ? ` toward ${escapeHtml(seg.headsign)}` : ""}</div>
           <div class="tp-sub">Board at <b>${escapeHtml(seg.from_stop || "")}</b>${seg.depart_text ? ` · ${seg.depart_text}` : ""}</div>
           <div class="tp-sub">${seg.stops ? `${seg.stops} stop${seg.stops === 1 ? "" : "s"} · ` : ""}get off at <b>${escapeHtml(seg.to_stop || "")}</b>${seg.arrive_text ? ` · ${seg.arrive_text}` : ""}</div>
           ${seg.agency ? `<div class="tp-sub">${escapeHtml(seg.agency)}</div>` : ""}</div></li>`;
-      }).join("") + `</ol><div class="tp-note">Scheduled times from Google; live delays are not included yet.</div>`;
+      }).join("") + `</ol><div class="tp-note">Scheduled times · Transit data from 511 SF Bay. Live delays aren't included yet.</div>`;
       box.innerHTML = html;
       box.hidden = false;
     }
@@ -1017,11 +1021,20 @@
     function renderModeTabs() {
       document.getElementById("mode-tabs").innerHTML = MODES.map(m => {
         const r = routeOptions[m.id];
-        const time = r ? formatDuration(r.duration) : "—";
+        const time = r ? formatDuration(r.duration) : (m.id === "transit" ? transitShortReason() : "—");
         const why = !r && m.id === "transit" && transitError ? `title="${escapeHtml(transitError)}"` : "";
         return `<button class="mode-tab${m.id === travelMode ? " on" : ""}" ${r ? "" : "disabled"} ${why}
                   onclick="setMode('${m.id}')"><span class="m">${m.label}</span><span class="t">${time}</span></button>`;
       }).join("");
+    }
+
+    // Why there's no transit option, in a word or two for the tab itself.
+    function transitShortReason() {
+      const e = (transitError || "").toLowerCase();
+      if (e.includes("walking")) return "Walk faster";
+      if (e.includes("transfer")) return "Needs transfer";
+      if (e.includes("stop within")) return "No stop near";
+      return "—";
     }
 
     function formatDuration(seconds) {

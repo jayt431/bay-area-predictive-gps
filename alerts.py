@@ -26,8 +26,8 @@ import transit
 _DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/{}/{},{};{},{}"
 
 # Travel modes, keyed by the name stored on a trip. Three route through a
-# Mapbox Directions profile; transit has none there and goes through Google
-# (transit.py) instead.
+# Mapbox Directions profile; transit has none there and goes through our own
+# planner over 511 schedule data (transit.py) instead.
 PROFILES = {"drive": "driving", "walk": "walking", "bike": "cycling"}
 MODES = (*PROFILES, "transit")
 MODE_NOUN = {"drive": "Drive", "walk": "Walk", "bike": "Bike ride", "transit": "Transit"}
@@ -188,9 +188,11 @@ def describe_segment(seg: dict) -> str:
     if seg.get("kind") == "transit":
         short, name = seg.get("line") or "", seg.get("line_name") or ""
         label = f"{short} {name}" if short and name and name != short else (short or name)
-        line = f"{label} {(seg.get('vehicle') or 'transit').lower()}".strip()
+        vehicle = (seg.get("vehicle") or "transit").lower()
+        line = label if vehicle in label.lower() else f"{label} {vehicle}".strip()
         toward = f" toward {seg['headsign']}" if seg.get("headsign") else ""
-        stops = f", {seg['stops']} stops" if seg.get("stops") else ""
+        count = seg.get("stops")
+        stops = f", {count} stop{'' if count == 1 else 's'}" if count else ""
         when = f" ({seg['depart_text']})" if seg.get("depart_text") else ""
         return (f"Take the {line}{toward} from {seg.get('from_stop')}{when}"
                 f"{stops}, get off at {seg.get('to_stop')}")

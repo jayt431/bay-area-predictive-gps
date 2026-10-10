@@ -72,7 +72,7 @@ Being able to say this precisely is worth more than claiming everything is live.
 | Parking availability | **Invented** | Predicted, not measured — no live curb feed exists |
 | Break-in risk | **Invented** | Placeholder; real path is SFPD incident data |
 | Events (concerts, games) | **Invented** | Real path is Ticketmaster |
-| Transit directions | **Real, once keyed** | Google Routes API — scheduled times, not live delays |
+| Transit directions | **Real** | Our own planner over Muni, BART and Caltrain schedules (511) — direct rides, scheduled times |
 | Traffic baseline | **Invented** | Real path is Google Maps Routes API |
 | The AI trip brief | **Off by choice** | Needs a paid Anthropic API key; see §7 |
 
@@ -162,11 +162,33 @@ in Muni blue, BART in yellow), the ride is drawn on the map in that colour with
 the walks dashed, and when there is more than one way to go, the options are
 listed with their times so you can switch between them.
 
-Mapbox has no transit directions at all, so this comes from **Google's Routes
-API**. The request runs on the server, which keeps the key off the public page
-and lets the overnight alert plan a transit trip too. Google sends one step per
-walking turn; those are merged into a single "walk" so the list reads like
-instructions, not a turn-by-turn log.
+Mapbox has no transit directions at all. **The planner is our own**, running
+over the schedules Muni, BART and Caltrain publish through 511 — the same
+token that already feeds the traffic alerts.
+
+**How it works, in plain terms.** Transit agencies publish their whole system
+as open data (a format called GTFS): every stop, the exact shape of every line,
+and every scheduled trip. Muni alone is about 1.3 million "this bus is at this
+stop at this time" entries. A build step squeezes all three agencies into 1.6
+MB by noticing that most trips repeat the same list of stops — store the list
+once, then only the times. When you ask for directions:
+
+1. Find the stops within a short walk of home and of the destination.
+2. Find the lines that pass a stop near home and *later* a stop near the
+   destination.
+3. For each, find the next trip running today that you can walk to in time.
+4. Keep the best option per line, fastest first.
+
+**What it doesn't do yet: transfers.** One line, door to door. That covers
+most trips inside San Francisco; a trip that needs a change of line says so
+rather than inventing an answer. Transfers are the natural next step.
+
+**Why not Google, which was built first.** Google's Routes API was wired in,
+then removed before a key was ever set, because its terms forbid using it
+"with or near a non-Google Map" — and this app's map is Mapbox. Open data has
+no such rule, costs nothing per request, and is the same data that carries
+live delays. The lesson: read the terms of a data source before building on
+it, not after.
 
 **Two decisions worth being able to explain:**
 
@@ -175,19 +197,20 @@ instructions, not a turn-by-turn log.
   matched only against the walking, bus and streetcar parts of a trip — each
   separately, because joining them would draw a fake straight line across the
   tunnel and catch everything along it.
-- **A scheduled transit trip becomes "leave by".** Google is asked for a route
-  that *arrives* at the trip's time, so the alert can say "Leave by 8:00 AM,
-  take the N from Church St" — the transit version of the leave-by time from
-  the roadmap.
+- **A scheduled transit trip becomes "leave by".** The planner searches
+  backwards from the trip's time for the last ride that gets you there, so the
+  alert can say "Leave by 9:00 AM, take the N Judah from Powell" — the transit
+  version of the leave-by time from the roadmap.
 
-**Cost matters here in a way it didn't before.** Every Google request is
-billed, and the map is public. Identical requests within two minutes are
-answered from memory, and the server stops at a daily ceiling. The real guard
-is a quota set in Google Cloud itself.
+**Two honest limits.** It won't offer a bus for one stop when walking is about
+as fast — it says so instead. And the schedules expire: the agencies publish
+new ones every few months (the current set runs to January 2027). The health
+check reports the date, and past it the planner says "expired" instead of
+quietly planning on old timetables.
 
-**Not yet:** live delays. Times are Google's schedule. 511 publishes real-time
-arrivals and service alerts for every Bay Area operator, which is what would
-let an alert say "BART is running 15 minutes late."
+**Not yet:** live delays and transfers. 511 publishes real-time arrivals and
+service alerts for every Bay Area operator, which is what would let an alert
+say "BART is running 15 minutes late."
 
 ### Privacy, persistence, and plumbing
 Three fixes that came out of deploying it:
@@ -297,6 +320,15 @@ the real work was making failures announce themselves.
 ## 6. Decisions and trade-offs
 
 Being able to explain *why not the other way* is the mark of understanding.
+
+### Our own transit planner, not Google's
+Google gives better transit directions than a first-version planner — it
+handles transfers and live delays. But its terms forbid using it near a
+non-Google map, so using it would mean either breaking those terms or
+replacing Mapbox, the custom dark map, with Google Maps. The planner runs on
+open data that can be drawn anywhere, costs nothing per request, and builds
+understanding of how transit routing actually works. The trade-off: direct
+rides only, for now, and schedules that need rebuilding a few times a year.
 
 ### Calendars over secret links, not "Sign in with Google"
 Google Calendar cannot be read with an API key — personal data requires OAuth,

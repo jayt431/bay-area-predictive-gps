@@ -71,7 +71,9 @@ def health():
         "weather_key": bool(os.environ.get("OPENWEATHER_API_KEY")),
         "news_key": bool(os.environ.get("NEWSAPI_KEY")),
         "traffic_511": bool(os.environ.get("TRAFFIC_511_TOKEN")),
-        "transit_key": transit.available(),
+        # The date the bundled Muni/BART/Caltrain schedules stop covering.
+        # Past it, transit answers "expired" until gtfs_build.py is rerun.
+        "transit_data_until": transit.data_until(),
         # "sqlite" in production means scheduled trips vanish on restart.
         "schedule_storage": "postgres" if store.using_postgres() else "sqlite",
         # False in production means anyone can read and edit the schedule.
@@ -83,11 +85,8 @@ def health():
 
 @app.route("/api/transit")
 def transit_directions():
-    """Transit options from home to a destination, step by step.
-
-    Public like the rest of the map. Every call is billed by Google, so
-    transit.py caches identical requests briefly and enforces a daily ceiling.
-    """
+    """Direct-ride transit options from home to a destination, step by step,
+    planned over the bundled 511 schedules (Muni, BART, Caltrain)."""
     try:
         lat, lon = float(request.args["dest_lat"]), float(request.args["dest_lon"])
     except (KeyError, TypeError, ValueError):
