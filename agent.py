@@ -140,7 +140,10 @@ a threat to seem useful.
 but it is secondary to route disruptions.
 - The travel mode changes what matters. Driving: road incidents and parking. \
 Walking or cycling: highway incidents are irrelevant unless they close streets \
-the route uses, parking does not apply, and weather matters far more.
+the route uses, parking does not apply, and weather matters far more. Transit: \
+street incidents matter for buses and streetcars, not for BART or other rail; \
+an event near a station means crowding; the recommendation should name when \
+to leave and what to board.
 - Weather matters only when it would change the trip: rain likely during the \
 window, strong wind, poor visibility. Ordinary Bay Area fog or mild cool \
 temperatures are not a risk and should not be mentioned.
@@ -159,7 +162,7 @@ RECOMMENDATION: <one concrete action, or "No action needed" when RISK is none>
 """
 
 
-_MODE_WORDS = {"drive": "driving", "walk": "walking", "bike": "cycling"}
+_MODE_WORDS = {"drive": "driving", "walk": "walking", "bike": "cycling", "transit": "public transit"}
 
 
 def _format_trip_context(ctx: dict) -> str:
@@ -176,6 +179,12 @@ def _format_trip_context(ctx: dict) -> str:
             lines.append(f"  - [{d.get('severity', '?').upper()}] {d.get('name')}: {d.get('reason', '')}")
     else:
         lines.append("  - none detected on this route")
+    plan = ctx.get("transit") or {}
+    if plan.get("steps"):
+        lines.append("")
+        lines.append(f"Transit plan (leave {plan.get('leave_text') or 'now'}, "
+                     f"arrive {plan.get('arrive_text') or '?'}):")
+        lines.extend(f"  {i}. {step}" for i, step in enumerate(plan["steps"], 1))
     parking = ctx.get("parking") or []
     lines.append("")
     lines.append("Parking near destination:")

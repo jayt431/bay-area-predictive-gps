@@ -26,6 +26,7 @@ from flask import Flask, jsonify, render_template, request
 
 import alerts
 import calendar_sync
+import transit
 import mock_data
 import scheduler
 import store
@@ -70,6 +71,7 @@ def health():
         "weather_key": bool(os.environ.get("OPENWEATHER_API_KEY")),
         "news_key": bool(os.environ.get("NEWSAPI_KEY")),
         "traffic_511": bool(os.environ.get("TRAFFIC_511_TOKEN")),
+        "transit_key": transit.available(),
         # "sqlite" in production means scheduled trips vanish on restart.
         "schedule_storage": "postgres" if store.using_postgres() else "sqlite",
         # False in production means anyone can read and edit the schedule.
@@ -77,6 +79,21 @@ def health():
         "cron_protected": bool(os.environ.get("CRON_SECRET")),
         "email_configured": bool(os.environ.get("RESEND_API_KEY")),
     })
+
+
+@app.route("/api/transit")
+def transit_directions():
+    """Transit options from home to a destination, step by step.
+
+    Public like the rest of the map. Every call is billed by Google, so
+    transit.py caches identical requests briefly and enforces a daily ceiling.
+    """
+    try:
+        lat, lon = float(request.args["dest_lat"]), float(request.args["dest_lon"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"routes": [], "error": "dest_lat and dest_lon are required"}), 400
+    home = mock_data.HOME
+    return jsonify(transit.plan((home["lat"], home["lon"]), (lat, lon)))
 
 
 @app.route("/api/routes")
@@ -264,6 +281,10 @@ def brief():
     disruptions, parking); the server adds live weather and news for the trip
     window before reasoning over the whole picture."""
     ctx = request.get_json(silent=True) or {}
+    # The map sends the raw transit plan; describe it with the same words the
+    # emailed alert uses.
+    if ctx.get("transit_plan"):
+        ctx["transit"] = alerts.transit_summary(ctx.pop("transit_plan"))
     return jsonify(compute_brief(ctx))
 
 
@@ -302,7 +323,7 @@ def _fallback_brief(ctx: dict) -> dict:
     yellows = [d for d in disruptions if d.get("severity") == "yellow"]
     dest = ctx.get("destination", "your destination")
     mode = alerts.normalize_mode(ctx.get("mode"))
-    trip_word = {"drive": "drive", "walk": "walk", "bike": "ride"}[mode]
+    trip_word = {"drive": "drive", "walk": "walk", "bike": "ride", "transit": "trip"}[mode]
 
     if reds:
         risk = "high"
@@ -332,11 +353,18 @@ def _fallback_brief(ctx: dict) -> dict:
         why = _as_sentence(why) + " " + " ".join(weather_alerts)
         if risk == "none":
             # On foot or on a bike, rain or wind is the trip, not a footnote.
-            risk = "low" if mode == "drive" else "medium"
+            risk = "medium" if mode in ("walk", "bike") else "low"
             headline = f"Clear route to {dest}, but check the weather."
         if rec == "No action needed.":
-            rec = ("Allow a little extra time for the conditions." if mode == "drive"
-                   else "Bring a rain layer, or consider driving instead.")
+            rec = {"drive": "Allow a little extra time for the conditions.",
+                   "transit": "Bring an umbrella for the walk to and from the stops."
+                   }.get(mode, "Bring a rain layer, or consider driving instead.")
+    # For transit the plan itself is the most useful line: when to leave and
+    # what to board.
+    plan = ctx.get("transit") or {}
+    if plan.get("leave_text") and rec == "No action needed.":
+        first_ride = next((s for s in plan.get("steps") or [] if s.startswith("Take")), None)
+        rec = f"Leave by {plan['leave_text']}." + (f" {first_ride}." if first_ride else "")
     return {"risk": risk, "headline": headline, "why": why, "recommendation": rec, "raw": None}
 
 

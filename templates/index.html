@@ -97,6 +97,28 @@
     .mode-tab:hover:not(:disabled) { border-color: var(--accent); }
     .mode-tab.on { border-color: var(--accent); color: var(--accent); background: rgba(0,229,199,0.08); }
     .mode-tab:disabled { opacity: 0.4; cursor: default; }
+    #route-summary { max-height: calc(100vh - 290px); overflow-y: auto; }
+    /* Transit itinerary */
+    #transit-plan { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .tp-head { font-size: 13px; color: var(--muted); }
+    .tp-head b { color: var(--ink); font-weight: 600; }
+    .tp-opts { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+    .tp-opt { display: flex; align-items: center; gap: 6px; background: none; border: 1px solid var(--line);
+      border-radius: 8px; padding: 5px 8px; cursor: pointer; color: var(--muted); font-family: var(--mono); font-size: 10px; }
+    .tp-opt.on { border-color: var(--accent); color: var(--ink); }
+    .tp-opt .gap { flex: 1; }
+    .tp-steps { list-style: none; margin: 10px 0 0; padding: 0; }
+    .tp-step { display: flex; gap: 10px; padding: 7px 0; position: relative; }
+    .tp-step + .tp-step { border-top: 1px solid rgba(255,255,255,0.04); }
+    .tp-badge { flex: 0 0 auto; min-width: 26px; height: 22px; padding: 0 6px; box-sizing: border-box; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
+      background: var(--accent); color: #05221e; }
+    .tp-badge.walk { background: none; border: 1px dashed var(--line); color: var(--muted); font-weight: 400; font-family: var(--mono); font-size: 9px; }
+    .tp-badge.mini { min-width: 0; height: 16px; padding: 0 4px; font-size: 9px; border-radius: 4px; }
+    .tp-t { font-size: 13px; color: var(--ink); line-height: 1.35; }
+    .tp-sub { font-size: 11px; color: var(--muted); line-height: 1.45; margin-top: 2px; }
+    .tp-sub b { color: var(--ink); font-weight: 600; }
+    .tp-note { font-size: 11px; color: var(--muted); margin-top: 8px; }
     .rs-stat .num { font-size: 22px; font-weight: 700; font-family: var(--mono); }
     .rs-stat .num small { font-size: 12px; color: var(--muted); font-weight: 400; }
     .rs-stat .cap { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
@@ -374,6 +396,7 @@
       <div class="rs-stat"><div class="num" id="rs-dist">—</div><div class="cap">Distance</div></div>
       <div class="rs-stat"><div class="num" id="rs-alerts">—</div><div class="cap">On route</div></div>
     </div>
+    <div id="transit-plan" hidden></div>
     <div id="brief">
       <div class="brief-top">
         <span id="brief-risk" class="brief-risk"></span>
@@ -469,6 +492,7 @@
           <label class="sc-lbl">Getting there</label>
           <select id="sched-mode" class="sc-input">
             <option value="drive">Drive</option><option value="walk">Walk</option><option value="bike">Bike</option>
+            <option value="transit">Transit</option>
           </select>
           <label class="sc-lbl">Repeat</label>
           <select id="sched-repeat" class="sc-input" onchange="onRepeatChange()"></select>
@@ -597,12 +621,15 @@
     let currentDest = null;  // the destination currently routed to
 
     // Travel modes and the Mapbox Directions profile each routes with. Transit
-    // is absent on purpose: Mapbox has no transit profile.
+    // has no Mapbox profile; it comes from Google through /api/transit.
     const MODES = [
       { id: "drive", label: "Drive", profile: "driving", verb: "Drive", sim: "drive" },
       { id: "walk",  label: "Walk",  profile: "walking", verb: "Walk",  sim: "walk" },
       { id: "bike",  label: "Bike",  profile: "cycling", verb: "Ride",  sim: "ride" },
+      { id: "transit", label: "Transit", profile: null,  verb: "Ride",  sim: "ride" },
     ];
+    let transitError = null;   // why the Transit tab is unavailable, shown on hover
+    let transitChoice = 0;     // which of the transit alternatives is shown
     const MODE_KEY = "bapg_mode";
     let travelMode = (() => {
       try { const m = localStorage.getItem(MODE_KEY); if (MODES.some(x => x.id === m)) return m; } catch {}
@@ -675,12 +702,20 @@
                    "circle-opacity": 0.9 } });
 
         // Route line: soft glow under a solid cyan line
-        map.addLayer({ id: "route-glow", type: "line", source: "route",
+        // A transit route arrives as segments: rides carry their line's colour,
+        // walking legs (kind "walk") draw dashed on their own layer.
+        const notWalk = ["!=", ["get", "kind"], "walk"];
+        const lineColor = ["coalesce", ["get", "color"], "#00E5C7"];
+        map.addLayer({ id: "route-glow", type: "line", source: "route", filter: notWalk,
           layout: { "line-cap": "round", "line-join": "round" },
-          paint: { "line-color": "#00E5C7", "line-width": 10, "line-blur": 8, "line-opacity": 0.35 } });
-        map.addLayer({ id: "route-core", type: "line", source: "route",
+          paint: { "line-color": lineColor, "line-width": 10, "line-blur": 8, "line-opacity": 0.35 } });
+        map.addLayer({ id: "route-core", type: "line", source: "route", filter: notWalk,
           layout: { "line-cap": "round", "line-join": "round" },
-          paint: { "line-color": "#00E5C7", "line-width": 3, "line-opacity": 0.9 } });
+          paint: { "line-color": lineColor, "line-width": 3, "line-opacity": 0.9 } });
+        map.addLayer({ id: "route-walk", type: "line", source: "route",
+          filter: ["==", ["get", "kind"], "walk"],
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: { "line-color": "#C8C8C8", "line-width": 2.5, "line-opacity": 0.85, "line-dasharray": [1, 2] } });
 
         // Home dot + pulse
         map.addLayer({ id: "me-pulse", type: "circle", source: "me",
@@ -858,7 +893,9 @@
       // One route per travel mode, fetched together so each tab can show its
       // time and switching between them is instant.
       const picked = currentDest;
-      const results = await Promise.all(MODES.map(m => fetchRoute(m.profile, lon, lat)));
+      const results = await Promise.all(MODES.map(m =>
+        m.profile ? fetchRoute(m.profile, lon, lat) : fetchTransit(lon, lat)));
+      transitChoice = 0;
       if (currentDest !== picked) return;      // a newer pick has taken over
       routeOptions = {};
       MODES.forEach((m, i) => { routeOptions[m.id] = results[i]; });
@@ -880,6 +917,96 @@
       } catch { return null; }
     }
 
+    // Transit options shaped like a Mapbox route (duration, distance, geometry)
+    // so the rest of the map — fitting, disruption matching, the summary —
+    // treats every mode alike. The step-by-step plan rides along as `transit`.
+    async function fetchTransit(lon, lat) {
+      transitError = null;
+      try {
+        const data = await (await fetch(`/api/transit?dest_lat=${lat}&dest_lon=${lon}`)).json();
+        if (!data.routes || !data.routes.length) { transitError = data.error || "No transit route"; return null; }
+        return { options: data.routes, ...transitAsRoute(data.routes[0]) };
+      } catch {
+        transitError = "Transit directions unavailable";
+        return null;
+      }
+    }
+
+    function transitAsRoute(plan) {
+      return {
+        duration: plan.duration_s,
+        distance: plan.distance_m,
+        geometry: { type: "LineString", coordinates: plan.segments.flatMap(s => s.coords) },
+        transit: plan,
+      };
+    }
+
+    function pickTransitOption(i) {
+      const t = routeOptions.transit;
+      transitChoice = i;
+      routeOptions.transit = { options: t.options, ...transitAsRoute(t.options[i]) };
+      showRoute();
+    }
+
+    // A street incident can't delay a train underground or a ferry, so a
+    // transit route is matched against its walking, bus and streetcar parts
+    // only. Each part is its own line: joining them would draw a false
+    // straight line across the gap a train covers.
+    const OFF_STREET = new Set(["Train", "Ferry"]);
+    function streetLines(route) {
+      const whole = [turf.lineString(route.geometry.coordinates)];
+      if (!route.transit) return whole;
+      const parts = route.transit.segments
+        .filter(s => s.coords.length > 1 && !(s.kind === "transit" && OFF_STREET.has(s.vehicle)))
+        .map(s => turf.lineString(s.coords));
+      return parts.length ? parts : whole;
+    }
+
+    function kmToRoute(lon, lat, lines) {
+      const p = turf.point([lon, lat]);
+      return Math.min(...lines.map(l => turf.pointToLineDistance(p, l, { units: "kilometers" })));
+    }
+
+    function lineBadge(seg, mini) {
+      const bg = seg.color || "var(--accent)";
+      const fg = seg.text_color || (seg.color ? "#fff" : "#05221e");
+      return `<span class="tp-badge${mini ? " mini" : ""}" style="background:${escapeHtml(bg)};color:${escapeHtml(fg)}"
+                title="${escapeHtml(seg.line_name || seg.line)}">${escapeHtml(seg.line || seg.agency || seg.vehicle)}</span>`;
+    }
+
+    function renderTransitPlan() {
+      const box = document.getElementById("transit-plan");
+      const route = routeOptions.transit;
+      if (travelMode !== "transit" || !route) { box.hidden = true; return; }
+      const plan = route.transit;
+      const miles = m => (m / 1609.34).toFixed(1);
+      let html = plan.leave_text
+        ? `<div class="tp-head">Leave <b>${plan.leave_text}</b> · Arrive <b>${plan.arrive_text}</b></div>`
+        : "";
+      if (route.options.length > 1) {
+        html += `<div class="tp-opts">` + route.options.map((o, i) => `
+          <button class="tp-opt${i === transitChoice ? " on" : ""}" onclick="pickTransitOption(${i})">
+            ${o.segments.filter(s => s.kind === "transit").map(s => lineBadge(s, true)).join("›")}
+            <span class="gap"></span>${o.leave_text || ""} → ${o.arrive_text || ""} · ${formatDuration(o.duration_s)}
+          </button>`).join("") + `</div>`;
+      }
+      html += `<ol class="tp-steps">` + plan.segments.map(seg => {
+        if (seg.kind === "walk") {
+          return `<li class="tp-step"><span class="tp-badge walk">walk</span><div>
+            <div class="tp-t">Walk ${formatDuration(seg.duration_s)}</div>
+            <div class="tp-sub">${miles(seg.distance_m)} mi to ${escapeHtml(seg.to || "your destination")}</div></div></li>`;
+        }
+        const name = seg.line_name && seg.line_name !== seg.line ? `${seg.line} ${seg.line_name}` : (seg.line || seg.line_name);
+        return `<li class="tp-step">${lineBadge(seg)}<div>
+          <div class="tp-t">${escapeHtml(name)} ${escapeHtml((seg.vehicle || "").toLowerCase())}${seg.headsign ? ` toward ${escapeHtml(seg.headsign)}` : ""}</div>
+          <div class="tp-sub">Board at <b>${escapeHtml(seg.from_stop || "")}</b>${seg.depart_text ? ` · ${seg.depart_text}` : ""}</div>
+          <div class="tp-sub">${seg.stops ? `${seg.stops} stop${seg.stops === 1 ? "" : "s"} · ` : ""}get off at <b>${escapeHtml(seg.to_stop || "")}</b>${seg.arrive_text ? ` · ${seg.arrive_text}` : ""}</div>
+          ${seg.agency ? `<div class="tp-sub">${escapeHtml(seg.agency)}</div>` : ""}</div></li>`;
+      }).join("") + `</ol><div class="tp-note">Scheduled times from Google; live delays are not included yet.</div>`;
+      box.innerHTML = html;
+      box.hidden = false;
+    }
+
     function setMode(mode) {
       if (!routeOptions[mode] && currentDest) return;
       travelMode = mode;
@@ -891,7 +1018,8 @@
       document.getElementById("mode-tabs").innerHTML = MODES.map(m => {
         const r = routeOptions[m.id];
         const time = r ? formatDuration(r.duration) : "—";
-        return `<button class="mode-tab${m.id === travelMode ? " on" : ""}" ${r ? "" : "disabled"}
+        const why = !r && m.id === "transit" && transitError ? `title="${escapeHtml(transitError)}"` : "";
+        return `<button class="mode-tab${m.id === travelMode ? " on" : ""}" ${r ? "" : "disabled"} ${why}
                   onclick="setMode('${m.id}')"><span class="m">${m.label}</span><span class="t">${time}</span></button>`;
       }).join("");
     }
@@ -911,7 +1039,14 @@
       // Dashed for walking, the usual map convention; solid otherwise.
       map.setPaintProperty("route-core", "line-dasharray", travelMode === "walk" ? [1, 1.8] : null);
 
-      map.getSource("route").setData({ type: "Feature", geometry: line, properties: {} });
+      map.getSource("route").setData(route.transit
+        ? { type: "FeatureCollection", features: route.transit.segments.map(seg => ({
+              type: "Feature", geometry: { type: "LineString", coordinates: seg.coords },
+              properties: { kind: seg.kind, color: seg.color || null } })) }
+        : { type: "Feature", geometry: line, properties: {} });
+      renderTransitPlan();
+      // The simulated drive steps through Mapbox maneuvers, which transit has none of.
+      document.getElementById("start-btn").style.display = route.transit ? "none" : "";
 
       // Fit the map to the whole route
       const coords = line.coordinates;
@@ -920,10 +1055,10 @@
       map.fitBounds(b, { padding: { top: 120, bottom: 160, left: 380, right: 360 }, duration: 900 });
 
       // Which disruptions fall near this route line?
-      const turfLine = turf.lineString(coords);
+      const lines = streetLines(route);
       let onRoute = [];
       disruptions.forEach(d => {
-        const km = turf.pointToLineDistance(turf.point([d.lon, d.lat]), turfLine, { units: "kilometers" });
+        const km = kmToRoute(d.lon, d.lat, lines);
         let severity = null;
         if (km <= NEAR_RED) severity = "red";
         else if (km <= NEAR_YELLOW) severity = "yellow";
@@ -932,7 +1067,7 @@
           reason: `${d.note} (${d.time} · ${km.toFixed(1)} km from route)` });
       });
       // Real civic/mobility events (SF 311) that fall near this route
-      let civicOnRoute = await civicNearRoute(lon, lat, turfLine);
+      let civicOnRoute = await civicNearRoute(lon, lat, lines);
       onRoute.push(...civicOnRoute);
       // Prioritize what matters: reds first, then closest. Cap so the map and
       // alerts stay digestible instead of flooding with every minor report.
@@ -973,6 +1108,8 @@
       const context = {
         destination: name,
         mode: travelMode,
+        transit_plan: route.transit
+          ? { ...route.transit, segments: route.transit.segments.map(({ coords, ...rest }) => rest) } : null,
         dest_lat: destLat,
         dest_lon: destLon,
         eta_min: Math.round(route.duration / 60),
@@ -1698,7 +1835,7 @@
                   <span class="when">${formatTime(time)}</span>
                   <span class="nm">${escapeHtml(trip.label)}</span>
                   ${trip.mode && trip.mode !== "drive"
-                    ? `<span class="sc-tag">${trip.mode === "walk" ? "Walk" : "Bike"}</span>` : ""}
+                    ? `<span class="sc-tag">${MODES.find(m => m.id === trip.mode)?.label || ""}</span>` : ""}
                   ${tag ? `<span class="sc-tag${trip.source === "ics" ? " cal" : ""}">${tag}</span>` : ""}
                   ${del}
                 </div>`;
@@ -2002,11 +2139,11 @@
     }
 
     // View 1: civic events that fall near the route line -> disruption shape
-    async function civicNearRoute(destLon, destLat, turfLine) {
+    async function civicNearRoute(destLon, destLat, lines) {
       const events = await fetchCivic(destLon, destLat, 1800);
       const out = [];
       events.forEach(e => {
-        const km = turf.pointToLineDistance(turf.point([e.lon, e.lat]), turfLine, { units: "kilometers" });
+        const km = kmToRoute(e.lon, e.lat, lines);
         if (km > NEAR_YELLOW) return;
         const severity = (e.severity === "red" && km <= NEAR_RED) ? "red" : "yellow";
         out.push({

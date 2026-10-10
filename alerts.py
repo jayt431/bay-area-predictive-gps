@@ -21,20 +21,22 @@ from datetime import datetime
 import requests
 
 import mock_data
+import transit
 
 _DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/{}/{},{};{},{}"
 
-# Travel modes, keyed by the name stored on a trip, mapped to the Mapbox
-# Directions profile that routes them. Transit is absent on purpose: Mapbox has
-# no transit profile, so it needs a different provider.
+# Travel modes, keyed by the name stored on a trip. Three route through a
+# Mapbox Directions profile; transit has none there and goes through Google
+# (transit.py) instead.
 PROFILES = {"drive": "driving", "walk": "walking", "bike": "cycling"}
-MODE_NOUN = {"drive": "Drive", "walk": "Walk", "bike": "Bike ride"}
+MODES = (*PROFILES, "transit")
+MODE_NOUN = {"drive": "Drive", "walk": "Walk", "bike": "Bike ride", "transit": "Transit"}
 
 
 def normalize_mode(mode: str | None) -> str:
     """Any unknown or missing mode is a drive, which is what every trip was
     before modes existed."""
-    return mode if mode in PROFILES else "drive"
+    return mode if mode in MODES else "drive"
 _RESEND_URL = "https://api.resend.com/emails"
 
 # Same thresholds the map uses, so an emailed alert and the on-screen one agree.
@@ -80,8 +82,31 @@ def point_to_line_km(point, line) -> float:
 
 
 def route(origin: tuple[float, float], destination: tuple[float, float],
-          token: str | None = None, mode: str = "drive") -> dict | None:
-    """Route from Mapbox for one travel mode. Coordinates are (lon, lat)."""
+          token: str | None = None, mode: str = "drive",
+          arrive_by: str | None = None) -> dict | None:
+    """Route for one travel mode. Coordinates are (lon, lat).
+
+    Transit is planned to arrive by `arrive_by` (a naive Pacific time), which
+    is what turns it into a "leave by" answer; the Mapbox modes ignore it.
+    """
+    if normalize_mode(mode) == "transit":
+        planned = transit.plan((origin[1], origin[0]), (destination[1], destination[0]),
+                               arrive_by=arrive_by, alternatives=False)
+        if not planned["routes"]:
+            return None
+        best = planned["routes"][0]
+        return {
+            "coords": [tuple(c) for seg in best["segments"] for c in seg["coords"]],
+            # Street incidents can't delay a train underground or a ferry, so
+            # only the walking, bus and streetcar parts are matched — each as
+            # its own line, so no false straight line spans the rail section.
+            "street_lines": [[tuple(c) for c in seg["coords"]] for seg in best["segments"]
+                             if len(seg["coords"]) > 1
+                             and not (seg["kind"] == "transit" and seg.get("vehicle") in ("Train", "Ferry"))],
+            "eta_min": round(best["duration_s"] / 60),
+            "distance_mi": round(best["distance_m"] / 1609.34, 1),
+            "transit": best,
+        }
     token = token or os.environ.get("MAPBOX_TOKEN", "")
     if not token:
         return None
@@ -110,13 +135,15 @@ def build_context(trip: dict) -> dict | None:
     """Assemble the same trip context the browser POSTs to /api/brief."""
     home = mock_data.HOME
     mode = normalize_mode(trip.get("mode"))
-    drawn = route((home["lon"], home["lat"]), (trip["dest_lon"], trip["dest_lat"]), mode=mode)
+    drawn = route((home["lon"], home["lat"]), (trip["dest_lon"], trip["dest_lat"]), mode=mode,
+                  arrive_by=trip.get("next_at") or trip.get("arrive_at"))
     if not drawn:
         return None
 
     on_route = []
+    lines = drawn.get("street_lines") or [drawn["coords"]]
     for disruption in mock_data.get_disruptions():
-        km = point_to_line_km((disruption["lon"], disruption["lat"]), drawn["coords"])
+        km = min(point_to_line_km((disruption["lon"], disruption["lat"]), line) for line in lines)
         severity = "red" if km <= NEAR_RED_KM else "yellow" if km <= NEAR_YELLOW_KM else None
         if not severity:
             continue
@@ -139,7 +166,36 @@ def build_context(trip: dict) -> dict | None:
         "disruptions": on_route,
         "parking": [{"name": s["street"], "count": s["count"]}
                     for s in (parking.get("streets") or [])[:5]],
+        "transit": transit_summary(drawn.get("transit")),
     }
+
+
+def transit_summary(plan: dict | None) -> dict | None:
+    """The parts of a transit plan the brief and the email use, without geometry."""
+    if not plan:
+        return None
+    return {
+        "leave_text": plan.get("leave_text"),
+        "arrive_text": plan.get("arrive_text"),
+        "steps": [describe_segment(s) for s in plan.get("segments") or []],
+    }
+
+
+def describe_segment(seg: dict) -> str:
+    """One itinerary line in plain words, e.g. "Take the N Judah light rail
+    toward Ocean Beach from Embarcadero (8:12 AM), 6 stops, get off at
+    Church St & Duboce Ave"."""
+    if seg.get("kind") == "transit":
+        short, name = seg.get("line") or "", seg.get("line_name") or ""
+        label = f"{short} {name}" if short and name and name != short else (short or name)
+        line = f"{label} {(seg.get('vehicle') or 'transit').lower()}".strip()
+        toward = f" toward {seg['headsign']}" if seg.get("headsign") else ""
+        stops = f", {seg['stops']} stops" if seg.get("stops") else ""
+        when = f" ({seg['depart_text']})" if seg.get("depart_text") else ""
+        return (f"Take the {line}{toward} from {seg.get('from_stop')}{when}"
+                f"{stops}, get off at {seg.get('to_stop')}")
+    minutes = max(1, round((seg.get("duration_s") or 0) / 60))
+    return f"Walk {minutes} min to {seg.get('to') or 'your destination'}"
 
 
 def format_email(trip: dict, alert: dict, context: dict) -> tuple[str, str]:
@@ -161,6 +217,11 @@ def format_email(trip: dict, alert: dict, context: dict) -> tuple[str, str]:
         "",
         f"Recommendation: {alert.get('recommendation', 'No action needed.')}",
     ]
+    plan = context.get("transit")
+    if plan:
+        if plan.get("leave_text"):
+            lines.insert(4, f"Leave by:    {plan['leave_text']}")
+        lines += ["", "Your route:"] + [f"  {i}. {s}" for i, s in enumerate(plan["steps"], 1)]
     if context.get("disruptions"):
         lines += ["", "On your route:"]
         lines += [f"  [{d['severity'].upper()}] {d['name']}" for d in context["disruptions"]]

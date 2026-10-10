@@ -58,6 +58,11 @@ Env vars:
 - `NEWSAPI_KEY` — live Bay Area news (free developer tier)
 - `TRAFFIC_511_TOKEN` — live 511 SF Bay traffic events; without it the
   disruption pool falls back to the mock list in `mock_data._DISRUPTIONS`
+- `GOOGLE_MAPS_API_KEY` — transit directions (Google Routes API, server-side
+  only). Without it the Transit tab is disabled with the reason on hover.
+  Every call is billed: `transit.py` caches identical requests for 120s and
+  stops at `TRANSIT_DAILY_LIMIT` (default 500) per process per day — set a
+  quota in Google Cloud as well
 - `DATABASE_URL` — Postgres for the scheduler. Absent, it uses a local SQLite
   file (`SCHEDULE_DB_PATH`, default `schedule.db`), so the scheduler runs
   locally with no signup
@@ -88,6 +93,7 @@ Endpoints:
 | `GET /api/disruptions` | Bay Area disruption pool. Live 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else mocked |
 | `GET /api/parking?lat&lon` | Mocked parking zones (legacy; UI now uses meters) |
 | `GET /api/meters?lat&lon` | **Real** SF metered streets (DataSF), grouped by street |
+| `GET /api/transit?dest_lat&dest_lon` | Transit options from home, step by step (Google Routes). `{routes, error?}` |
 | `GET /api/schedule` | Upcoming trips, calendar status, alert email |
 | `POST /api/schedule` | Add a manual trip (one-off `arrive_at`, or `days` + `time_of_day`) |
 | `DELETE /api/schedule/<id>` | Remove a trip |
@@ -138,6 +144,7 @@ domain migration, which left parking looking like a dead button for weeks.
 | `OPENWEATHER_API_KEY` | yes | yes | — |
 | `NEWSAPI_KEY` | yes | yes | — |
 | `TRAFFIC_511_TOKEN` | yes | yes | — |
+| `GOOGLE_MAPS_API_KEY` | not yet | **not yet set** | Google Cloud project with billing; restrict the key to the Routes API and set a daily quota |
 | `DATABASE_URL` | normally commented out | yes | value comes from Supabase → Connect → **Session pooler** |
 | `SCHEDULE_PASSCODE` | no, on purpose | **yes — required** | the passcode typed into the Schedule panel |
 | `CRON_SECRET` | no | yes | **also** a GitHub Actions repo secret, must match |
@@ -355,9 +362,23 @@ directly in code.
   changed meanwhile), walking draws dashed, the brief receives `mode`, and the
   nav labels follow it. Scheduled trips store `mode` too (column added by
   `store._add_mode_column`, default `drive`; a calendar re-sync keeps the
-  existing value), and `alerts.route()` routes with it. **Transit is not a
-  Mapbox profile** — it needs another provider (Google Routes) and is a
-  separate piece of work.
+  existing value), and `alerts.route()` routes with it.
+- **Transit** (`transit.py`, `GET /api/transit`): Mapbox has no transit
+  profile, so it comes from the Google Routes API, server-side so the key
+  stays off the page and the alert job can use it. `transit.normalize()` merges
+  Google's per-turn walking steps into single walks and keeps per ride: short
+  name (`line`, empty for BART — the badge falls back to the agency), full
+  name, colour, vehicle, headsign, board/alight stops, stop count, times. The
+  frontend shapes it like a Mapbox route (`transitAsRoute`) so fitting and the
+  summary need no special case; the map draws each ride in its line colour and
+  walks dashed (`route-walk` layer, filtered on `kind`). Alternatives show as
+  option rows. **Disruptions match only street-level parts** — walks, buses,
+  streetcars — each as its own line (`streetLines` in the page,
+  `street_lines` in `alerts.route`), because street incidents don't delay
+  BART or a ferry and joining the parts would draw a false line across the
+  tunnel. Scheduled transit trips are planned with `arrivalTime` = the trip's
+  time, which yields a "Leave by" for the email and fallback brief. Times are
+  Google's schedule, not live; real-time delays (511 transit) are next.
 - **Disruptions**: pool in `mock_data` (`GET /api/disruptions`); frontend keeps
   those within 0.5km (red) / 2km (yellow) of the route line (Turf). Native GL
   circle/symbol layers, not HTML markers (fixes zoom jank). Bell + alert panel.

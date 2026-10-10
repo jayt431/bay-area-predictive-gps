@@ -8,7 +8,7 @@ was diagnosed, and how to explain any of it to another person.
 Upload this file into a Claude conversation and ask questions about anything in
 it. It is meant to be talked through, not just read.
 
-**Last updated:** 2026-10-09 · **Live:** https://bay-area-predictive-gps.onrender.com ·
+**Last updated:** 2026-10-10 · **Live:** https://bay-area-predictive-gps.onrender.com ·
 **Repo:** github.com/jayt431/bay-area-predictive-gps
 
 ---
@@ -72,6 +72,7 @@ Being able to say this precisely is worth more than claiming everything is live.
 | Parking availability | **Invented** | Predicted, not measured — no live curb feed exists |
 | Break-in risk | **Invented** | Placeholder; real path is SFPD incident data |
 | Events (concerts, games) | **Invented** | Real path is Ticketmaster |
+| Transit directions | **Real, once keyed** | Google Routes API — scheduled times, not live delays |
 | Traffic baseline | **Invented** | Real path is Google Maps Routes API |
 | The AI trip brief | **Off by choice** | Needs a paid Anthropic API key; see §7 |
 
@@ -153,11 +154,40 @@ more than a different line on the map, because the mode changes what matters:
 - **Scheduled trips** remember their mode, so the night-before alert routes
   the way you will actually travel.
 
-**Transit is deliberately not in this step.** Mapbox, which draws every route
-here, has no public-transit directions at all. Transit needs a second provider
-(Google's Routes API is the practical one) plus 511's transit alerts for the
-predictive side — BART delays, Muni service changes. That is the next big
-piece, and the mode switch is the foundation it plugs into.
+### Transit directions
+The Transit tab gives the step-by-step a rider needs: *walk 4 min to Powell St
+→ take the BART train toward Antioch, board at Powell, 2 stops, get off at
+Embarcadero → walk 5 min*. Each line shows as a badge in its own colour (the N
+in Muni blue, BART in yellow), the ride is drawn on the map in that colour with
+the walks dashed, and when there is more than one way to go, the options are
+listed with their times so you can switch between them.
+
+Mapbox has no transit directions at all, so this comes from **Google's Routes
+API**. The request runs on the server, which keeps the key off the public page
+and lets the overnight alert plan a transit trip too. Google sends one step per
+walking turn; those are merged into a single "walk" so the list reads like
+instructions, not a turn-by-turn log.
+
+**Two decisions worth being able to explain:**
+
+- **Street problems are ignored for the underground parts.** A crash on Market
+  Street cannot delay a BART train in the tunnel beneath it, so disruptions are
+  matched only against the walking, bus and streetcar parts of a trip — each
+  separately, because joining them would draw a fake straight line across the
+  tunnel and catch everything along it.
+- **A scheduled transit trip becomes "leave by".** Google is asked for a route
+  that *arrives* at the trip's time, so the alert can say "Leave by 8:00 AM,
+  take the N from Church St" — the transit version of the leave-by time from
+  the roadmap.
+
+**Cost matters here in a way it didn't before.** Every Google request is
+billed, and the map is public. Identical requests within two minutes are
+answered from memory, and the server stops at a daily ceiling. The real guard
+is a quota set in Google Cloud itself.
+
+**Not yet:** live delays. Times are Google's schedule. 511 publishes real-time
+arrivals and service alerts for every Bay Area operator, which is what would
+let an alert say "BART is running 15 minutes late."
 
 ### Privacy, persistence, and plumbing
 Three fixes that came out of deploying it:
