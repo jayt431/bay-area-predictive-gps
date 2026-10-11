@@ -609,7 +609,9 @@
     // A few one-tap destinations so you can demo without typing
     const QUICK = [
       { name: "Chase Center", lon: -122.3874, lat: 37.7680 },
-      { name: "SFO Airport",  lon: -122.3790, lat: 37.6213 },
+      // The terminals and the BART station, not the middle of the airfield —
+      // routes had to snap ~700 m to reach a road from there.
+      { name: "SFO Airport",  lon: -122.3925, lat: 37.6159 },
       { name: "Oracle Park",  lon: -122.3893, lat: 37.7786 },
       { name: "Downtown Berkeley", lon: -122.2680, lat: 37.8700 },
       { name: "Ferry Building", lon: -122.3934, lat: 37.7956 },
@@ -910,8 +912,12 @@
     }
 
     async function fetchRoute(profile, lon, lat) {
+      // exclude=ferry: left to itself Mapbox will put a bike or a walk on the
+      // Alameda–South San Francisco ferry (30 km straight across the Bay, and
+      // it runs only at commute hours). Ferries belong to the Transit tab,
+      // which knows their timetables.
       const url = `https://api.mapbox.com/directions/v5/mapbox/${profile}/`
-        + `${home.lon},${home.lat};${lon},${lat}?geometries=geojson&overview=full&steps=true&access_token=${TOKEN}`;
+        + `${home.lon},${home.lat};${lon},${lat}?geometries=geojson&overview=full&steps=true&exclude=ferry&access_token=${TOKEN}`;
       try {
         const dir = await (await fetch(url)).json();
         return (dir.routes && dir.routes[0]) || null;

@@ -362,6 +362,19 @@ first one — allow it, and show the two pieces as one ride. Lesson: an output
 that looks wrong can be a correct answer worded badly; check the data before
 forbidding it.
 
+### A bike ride across the Bay
+Biking to SFO drew a straight line through the water and took 93 minutes. Not a
+drawing bug: Mapbox had routed the bike onto the **Alameda–South San Francisco
+ferry**, 30 km across the Bay. A ferry has no streets to follow, so its leg is
+drawn as straight segments — and Mapbox doesn't know that ferry runs only at
+weekday commute hours. Walking to the terminal had the same hidden ferry.
+Every Mapbox request now says `exclude=ferry`: biking to SFO is 72 minutes on
+real roads. Ferries belong to the Transit tab, which plans them against their
+actual timetables. Along the way the "SFO Airport" chip moved from the middle
+of the airfield (routes had to snap 700 m to find a road) to the terminals and
+BART station — which also made transit to SFO work, where it had said "no stop
+near".
+
 ### The 511 token nearly went into a public log
 One small agency's feed returned "not found", and the error message printed
 the full request address — which carries the token. Locally that's harmless;

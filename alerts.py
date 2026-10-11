@@ -114,7 +114,8 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
         resp = requests.get(
             _DIRECTIONS_URL.format(PROFILES[normalize_mode(mode)],
                                    origin[0], origin[1], destination[0], destination[1]),
-            params={"access_token": token, "geometries": "geojson", "overview": "full"},
+            # No ferries: the Transit mode handles them, with their timetables.
+            params={"access_token": token, "geometries": "geojson", "overview": "full", "exclude": "ferry"},
             timeout=20,
         )
         resp.raise_for_status()

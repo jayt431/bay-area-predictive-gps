@@ -280,7 +280,9 @@ def _walk(frm: tuple[float, float], to: tuple[float, float], estimate_s: float) 
         return straight
     try:
         resp = requests.get(_WALK_URL.format(frm[1], frm[0], to[1], to[0]),
-                            params={"access_token": token, "geometries": "geojson", "overview": "full"},
+                            # A "walk" must never quietly include a ferry ride.
+                            params={"access_token": token, "geometries": "geojson",
+                                    "overview": "full", "exclude": "ferry"},
                             timeout=10)
         resp.raise_for_status()
         best = (resp.json().get("routes") or [None])[0]
