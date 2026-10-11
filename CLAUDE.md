@@ -31,9 +31,10 @@ set -a && . ./.env && set +a && ./venv/bin/python app.py
 set -a && . ./.env && set +a && ./venv/bin/python run_scenarios.py --dry-run
 set -a && . ./.env && set +a && ./venv/bin/python run_scenarios.py   # needs ANTHROPIC_API_KEY
 
-# Rebuild the transit schedules (Muni, BART, Caltrain) from 511 and verify.
+# Refresh the transit schedules (every agency 511 publishes) and verify.
 # Normally automatic: .github/workflows/transit-schedules.yml does this nightly.
-set -a && . ./.env && set +a && ./venv/bin/python gtfs_build.py
+set -a && . ./.env && set +a && ./venv/bin/python gtfs_build.py   # only what changed
+set -a && . ./.env && set +a && ./venv/bin/python gtfs_build.py --all
 ./venv/bin/python gtfs_build.py --check
 
 # Production (Render) runs: gunicorn app:app   (see Procfile)
@@ -93,7 +94,7 @@ Endpoints:
 | `GET /api/disruptions` | Bay Area disruption pool. Live 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else mocked |
 | `GET /api/parking?lat&lon` | Mocked parking zones (legacy; UI now uses meters) |
 | `GET /api/meters?lat&lon` | **Real** SF metered streets (DataSF), grouped by street |
-| `GET /api/transit?dest_lat&dest_lon` | Direct-ride transit options from home, step by step (own planner over 511 GTFS). `{routes, error?}` |
+| `GET /api/transit?dest_lat&dest_lon` | Transit options from home, step by step, up to two transfers, every Bay Area agency (own planner over 511 GTFS). `{routes, error?}` |
 | `GET /api/schedule` | Upcoming trips, calendar status, alert email |
 | `POST /api/schedule` | Add a manual trip (one-off `arrive_at`, or `days` + `time_of_day`) |
 | `DELETE /api/schedule/<id>` | Remove a trip |
@@ -367,26 +368,47 @@ directly in code.
   any key was set: the Maps Platform Terms (§3.2.3(e)) forbid using its
   services "with or near a non-Google Map", and this is a Mapbox app. Open
   GTFS data can be drawn on any map.
-  - **Data**: `gtfs_build.py` downloads Muni, BART and Caltrain (`SF,BA,CT`)
-    from 511 with `TRAFFIC_511_TOKEN` and writes `transit_data/index.json.gz`
-    (stops, lines, services, shapes, patterns) and `times.bin.gz` (every stop
-    time as little-endian int32 seconds after service-day midnight) — about
-    1.6 MB, **committed**, because Render's free tier restarts after 15 idle
-    minutes with no persistent disk. Trips sharing a stop sequence are one
-    *pattern*; each pattern stores, per stop, the nearest shape vertex
-    (forward search) so a ride is cut from the real line shape. Platforms take
-    their parent station's name. Loaded lazily on first transit request.
-  - **Refresh**: `.github/workflows/transit-schedules.yml` rebuilds nightly
-    (3:41 AM PT) and commits only when the output changed — the build is
-    byte-reproducible (gzip with `mtime=0`, no filename), so an unchanged
-    feed is no diff. The push redeploys Render. Before committing it runs
-    `gtfs_build.py --check`: every operator present, a Powell → Ferry
-    Building trip still plans, schedules not within 14 days of expiring. A
-    red run leaves the committed schedules live. `transit_data/feeds.json`
-    lists each agency's feed version and end date. Needs the
-    `TRAFFIC_511_TOKEN` repo secret.
-  - **Expiry**: `/api/health` reports `transit_data_until`; past it the
-    planner answers "expired" instead of planning on stale schedules.
+  - **Data**: every agency 511 publishes (41 today; `EXCLUDED` drops the
+    merged regional feed `RG` and microtransit `SU`; `CR` Santa Cruz is
+    listed but 404s). **One file pair per agency**, `transit_data/<OP>.json.gz`
+    (stops, lines, services, shapes, patterns — ids local to the agency) and
+    `<OP>.bin.gz` (every stop time as little-endian int32 seconds after
+    service-day midnight), about 7.7 MB in all, **committed**, because
+    Render's free tier restarts after 15 idle minutes with no persistent disk.
+    Per-agency files mean a refresh commits only the agencies that changed;
+    one combined file would grow the repo by its full size on every change.
+    `transit_data/feeds.json` is the manifest: per agency, rider-facing name
+    (`AGENCY_SHORT`), feed version, start/end dates, and 511's
+    `LastGenerated`. Trips sharing a stop sequence are one *pattern*; each
+    pattern stores, per stop, the nearest shape vertex (forward search) so a
+    ride is cut from the real line shape. Platforms take their parent
+    station's name.
+  - **Loading** (`transit._load`, lazily on first transit request): merges
+    agencies by shifting each one's ids past those already loaded, and holds
+    numbers in `array('i')` rather than lists (4 bytes per int vs ~36) —
+    all 41 agencies, ~20k stops and 3.1M stop times, in ~100 MB RSS (15
+    agencies as lists was ~180 MB). Transfer walks are computed per stop on
+    first use (`_walks_from`), not for all 20k stops up front.
+  - **Refresh**: `.github/workflows/transit-schedules.yml`, nightly 3:41 AM
+    PT. `gtfs_build.py` (no flags) asks 511's `transit/gtfsoperators` which
+    feeds changed since the manifest's `LastGenerated` — one request — and
+    downloads only those, usually none (the 60/hr token is shared with the
+    live traffic alerts). A 429 stops downloading and leaves the rest for the
+    next night; a single agency failing is a warning (an error for `MAJOR`:
+    SF, BA, CT, AC, SM, SC, GG) and keeps its previous files. Agencies 511
+    stops listing are removed. Byte-reproducible output (gzip `mtime=0`, no
+    filename), so no change is no diff; the commit step uses
+    `git status --porcelain` because a new agency is an untracked file `git
+    diff` would miss. **Errors never contain the request URL** — it carries
+    the token, and the Actions log is public. `--check` before committing:
+    every major agency present, a Powell → Ferry Building trip plans, a major
+    agency within **3 days** of running out is an error and anything within
+    14 a warning (VTA publishes rolling ~3-week feeds and replaces them a
+    week or so before the end, so a 14-day error would be red in normal
+    operation). Needs the `TRAFFIC_511_TOKEN` repo secret.
+  - **Expiry**: no blanket check — every service has its own end date, so an
+    expired agency simply stops contributing trips. `/api/health` reports
+    `transit_agencies` and `transit_data_until` (earliest end among majors).
   - **Search**: stops within 800 m straight-line of each end (walk estimate
     ×1.3 detour at 1.25 m/s). Two searches, ranked together by `_choose`:
     - `_direct`: every pattern passing a stop near the origin and later one
@@ -403,8 +425,14 @@ directly in code.
       overwrites a stop a ride reached in the same round (unwinding expects a
       ride there). RAPTOR can also return a single ride whose walk passes a
       nearby stop on the way to a farther station, which `_direct` misses.
-    - Transfers are shown only if they beat the best single ride by 5 min (or
-      there is none). Rides that beat walking the whole way by under 3 min are
+    - Each extra transfer must beat every journey with fewer rides by 5 min
+      (`TRANSFER_WORTH_S`). Two patterns of one line meeting at a stop — the
+      25 runs out to Treasure Island as one trip and loops back as the next —
+      count as one ride and `_build` merges them ("stay on"), rather than
+      showing "change from the 25 to the 25". Banning that inside the search
+      was tried first and lost the 25 to Treasure Island entirely, because
+      the island's stops are only on the return pattern. Rides that beat
+      walking the whole way by under 3 min are
       dropped; when nothing is left, the error says walking is about as fast.
       Back-to-back walks merge into one. Errors are specific (no stop near,
       no route, expired) and the Transit tab shows a short form. The page
@@ -423,7 +451,7 @@ directly in code.
     joining the parts would draw a false line across the tunnel. Scheduled
     transit trips plan with `arrive_by` = the trip's time, giving a "Leave by"
     for the email and fallback brief. Schedules only; live delays (511
-    real-time) are next, then transfers.
+    real-time) are next.
 - **Disruptions**: pool in `mock_data` (`GET /api/disruptions`); frontend keeps
   those within 0.5km (red) / 2km (yellow) of the route line (Turf). Native GL
   circle/symbol layers, not HTML markers (fixes zoom jank). Bell + alert panel.

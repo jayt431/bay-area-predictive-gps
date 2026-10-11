@@ -1,34 +1,43 @@
 """
-Build the transit schedule index from 511 SF Bay GTFS feeds.
+Build the transit schedules from 511 SF Bay's GTFS feeds — every Bay Area agency.
 
-Run this to (re)generate `transit_data/`, then commit the result:
+    set -a && . ./.env && set +a && ./venv/bin/python gtfs_build.py   # refresh what changed
+    ./venv/bin/python gtfs_build.py --all                              # rebuild every agency
+    ./venv/bin/python gtfs_build.py --operators SF,BA                  # just these
+    ./venv/bin/python gtfs_build.py --from-dir path/to/zips            # offline, from <OP>.zip
+    ./venv/bin/python gtfs_build.py --check                            # verify transit_data/
 
-    set -a && . ./.env && set +a && ./venv/bin/python gtfs_build.py
-    ./venv/bin/python gtfs_build.py --from-dir path/to/zips    # offline
-    ./venv/bin/python gtfs_build.py --check                    # verify the output
-
-Normally nobody runs it by hand: .github/workflows/transit-schedules.yml
-rebuilds nightly and commits only when 511 has published new schedules.
+Normally nobody runs it by hand: .github/workflows/transit-schedules.yml runs
+the refresh nightly and commits whatever changed.
 
 GTFS is the open format every transit agency publishes: stops, lines, the
 shape of each line, and every scheduled trip. Muni alone is about 1.3 million
-scheduled stop times, far too many to hold as Python objects on a small
-server. So the build does the heavy lifting once:
+scheduled stop times, the whole Bay Area several million — far too many to
+hold as Python objects on a small server. So the build does the heavy
+lifting once:
 
 - Trips that visit the same stops in the same order are grouped into a
   *pattern*. A pattern stores its stop list once; each trip then needs only
   its times.
 - All times go into one flat array of 32-bit integers (seconds after the
   service day's midnight; GTFS allows 25:10:00 for after-midnight trips),
-  written as raw bytes. About 5 MB before compression.
+  written as raw bytes.
 - Each pattern records, for every stop, the nearest point on the line's
   shape, so the planner can cut out exactly the stretch a rider travels.
 
-Why commit the output instead of building on the server: Render's free tier
-restarts after 15 minutes idle and has no persistent disk, so a build at
-startup would rerun on nearly every visit. The index changes only when the
-agencies publish new schedules — check `feed_end` in the index, or
-`/api/health`, which reports when the data expires.
+**One file pair per agency** (`<OP>.json.gz` + `<OP>.bin.gz`), merged when the
+planner loads. A refresh then rebuilds only the agencies that published
+something new, and the commit carries only their files — one combined file
+would grow the repository by its full size every time any of forty agencies
+changed anything.
+
+**What changed is known up front.** 511's operator list reports when each
+feed was last generated, so a nightly refresh costs one request for the list
+plus one per changed agency — usually none — instead of forty downloads
+against a 60-per-hour token limit the live site's traffic alerts share.
+
+`transit_data/feeds.json` records, per agency, the feed version, the dates
+it covers, and 511's generation time.
 """
 
 from __future__ import annotations
@@ -48,12 +57,38 @@ from pathlib import Path
 
 import requests
 
-OPERATORS = ["SF", "BA", "CT"]   # Muni, BART, Caltrain
 OUT_DIR = Path(__file__).parent / "transit_data"
+MANIFEST = "feeds.json"
 _FEED_URL = "https://api.511.org/transit/datafeeds"
+_LIST_URL = "https://api.511.org/transit/gtfsoperators"
 
-# Names riders actually use, instead of the legal agency names in the feeds.
-AGENCY_SHORT = {"SF": "Muni", "BA": "BART", "CT": "Caltrain"}
+# Not timetabled transit: the merged regional feed (it duplicates everyone
+# else) and on-demand microtransit, which has no schedule to plan against.
+EXCLUDED = {"RG", "SU"}
+
+# The agencies a broken build must never silently lose. A small shuttle
+# failing to download is a warning; one of these is an error.
+MAJOR = ["SF", "BA", "CT", "AC", "SM", "SC", "GG"]
+
+# Names riders actually use, instead of the legal names in the feeds.
+AGENCY_SHORT = {
+    "3D": "Tri Delta", "AC": "AC Transit", "AF": "Angel Island Ferry", "AM": "Capitol Corridor",
+    "BA": "BART", "CC": "County Connection", "CE": "ACE", "CM": "Commute.org",
+    "CR": "Santa Cruz METRO", "CT": "Caltrain", "DE": "Dumbarton Express",
+    "EE": "Emery Express", "EM": "Emery Go-Round", "FS": "FAST", "GF": "Golden Gate Ferry",
+    "GG": "Golden Gate Transit", "GP": "Rec & Park", "MA": "Marin Transit",
+    "MB": "Mission Bay shuttle", "MC": "MV Community Shuttle", "MV": "MVgo",
+    "PE": "Petaluma Transit", "PG": "PresidiGo", "RV": "Delta Breeze", "SA": "SMART",
+    "SB": "SF Bay Ferry", "SC": "VTA", "SE": "Solano Express", "SF": "Muni",
+    "SI": "SFO AirTrain", "SL": "LINKS", "SM": "SamTrans", "SO": "Sonoma County Transit",
+    "SQ": "San Joaquins", "SR": "Santa Rosa CityBus", "SS": "South City Shuttle",
+    "ST": "SolTrans", "TF": "Treasure Island Ferry", "UC": "Union City Transit",
+    "VC": "Vacaville City Coach", "VN": "VINE", "WC": "WestCAT", "WH": "Wheels",
+}
+
+
+class RateLimited(Exception):
+    """511 said 429: stop downloading this run and finish the rest next time."""
 
 
 def _rows(z: zipfile.ZipFile, name: str):
@@ -89,12 +124,14 @@ def _nearest_vertices(stops_xy, shape_xy):
     return out
 
 
-def load_feed(op: str, z: zipfile.ZipFile, index: dict, times: array) -> None:
+def build_agency(op: str, z: zipfile.ZipFile) -> tuple[dict, array]:
+    """One agency's feed as an index (ids local to this agency) and its times."""
     agency = AGENCY_SHORT.get(op, op)
     feed = (_rows(z, "feed_info.txt") or [{}])[0]
-    index["feeds"].append({"operator": op, "agency": agency,
-                           "start": feed.get("feed_start_date"), "end": feed.get("feed_end_date"),
-                           "version": feed.get("feed_version")})
+    index = {"stops": [], "routes": [], "services": [], "shapes": [], "patterns": [],
+             "feed": {"agency": agency, "start": feed.get("feed_start_date"),
+                      "end": feed.get("feed_end_date"), "version": feed.get("feed_version")}}
+    times = array("i")
 
     # Stops: platforms take their station's name ("22nd Street", not
     # "22nd Street Caltrain Station Northbound").
@@ -103,10 +140,13 @@ def load_feed(op: str, z: zipfile.ZipFile, index: dict, times: array) -> None:
     for sid, s in raw_stops.items():
         if s.get("location_type") not in ("", "0", None):
             continue                                  # stations and entrances aren't boarded
+        try:
+            lat, lon = float(s["stop_lat"]), float(s["stop_lon"])
+        except (TypeError, ValueError):
+            continue
         parent = raw_stops.get(s.get("parent_station") or "")
-        name = (parent or s)["stop_name"]
         stop_ix[sid] = len(index["stops"])
-        index["stops"].append([name, round(float(s["stop_lat"]), 6), round(float(s["stop_lon"]), 6)])
+        index["stops"].append([(parent or s)["stop_name"], round(lat, 6), round(lon, 6)])
 
     route_ix = {}
     for r in _rows(z, "routes.txt"):
@@ -121,11 +161,10 @@ def load_feed(op: str, z: zipfile.ZipFile, index: dict, times: array) -> None:
 
     service_ix = {}
     def service(sid):
-        key = f"{op}:{sid}"
-        if key not in service_ix:
-            service_ix[key] = len(index["services"])
+        if sid not in service_ix:
+            service_ix[sid] = len(index["services"])
             index["services"].append({"days": "0000000", "start": "0", "end": "0", "add": [], "remove": []})
-        return service_ix[key]
+        return service_ix[sid]
     for c in _rows(z, "calendar.txt"):
         entry = index["services"][service(c["service_id"])]
         entry["days"] = "".join(c[d] for d in ("monday", "tuesday", "wednesday", "thursday",
@@ -145,10 +184,10 @@ def load_feed(op: str, z: zipfile.ZipFile, index: dict, times: array) -> None:
     by_trip = defaultdict(list)
     with z.open("stop_times.txt") as fh:
         for st in csv.DictReader(io.TextIOWrapper(fh, encoding="utf-8-sig")):
-            if st["stop_id"] not in stop_ix:
-                continue
-            by_trip[st["trip_id"]].append((int(st["stop_sequence"]), stop_ix[st["stop_id"]],
-                                           _seconds(st["departure_time"] or st["arrival_time"])))
+            when = st.get("departure_time") or st.get("arrival_time")
+            if st["stop_id"] not in stop_ix or not when:
+                continue                              # untimed stops can't be planned against
+            by_trip[st["trip_id"]].append((int(st["stop_sequence"]), stop_ix[st["stop_id"]], _seconds(when)))
 
     patterns = {}
     for trip_id, visits in by_trip.items():
@@ -183,10 +222,11 @@ def load_feed(op: str, z: zipfile.ZipFile, index: dict, times: array) -> None:
         pat["off"].append(len(times))
         times.extend(v[2] for v in visits)
 
-    index["patterns"].extend(patterns.values())
+    index["patterns"] = list(patterns.values())
     print(f"  {op} ({agency}): {len(stop_ix)} stops, {len(route_ix)} lines, "
           f"{len(patterns)} patterns, {sum(len(p['off']) for p in patterns.values())} trips",
           file=sys.stderr)
+    return index, times
 
 
 def _write_gz(path: Path, payload: bytes) -> None:
@@ -197,70 +237,154 @@ def _write_gz(path: Path, payload: bytes) -> None:
         fh.write(payload)
 
 
-def fetch(op: str, token: str) -> zipfile.ZipFile:
-    resp = requests.get(_FEED_URL, params={"api_key": token, "operator_id": op}, timeout=120)
-    resp.raise_for_status()
-    return zipfile.ZipFile(io.BytesIO(resp.content))
+def write_agency(out: Path, op: str, index: dict, times: array) -> None:
+    feed = index.pop("feed")
+    if sys.byteorder != "little":
+        times.byteswap()                      # stored little-endian regardless of build machine
+    _write_gz(out / f"{op}.json.gz", json.dumps(index, separators=(",", ":")).encode("utf-8"))
+    _write_gz(out / f"{op}.bin.gz", times.tobytes())
+    index["feed"] = feed
+
+
+def _get(url: str, token: str, **params) -> requests.Response:
+    """GET from 511. Errors carry the status and the endpoint, never the URL
+    as sent: that includes the token, and this runs in a public repository's
+    Actions log."""
+    try:
+        resp = requests.get(url, params={"api_key": token, **params}, timeout=180)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"{exc.__class__.__name__} fetching {url}") from None
+    if resp.status_code == 429:
+        raise RateLimited(url)
+    if not resp.ok:
+        raise RuntimeError(f"{resp.status_code} {resp.reason} from {url}"
+                           + (f" for {params['operator_id']}" if "operator_id" in params else ""))
+    return resp
+
+
+def published(token: str) -> dict[str, str]:
+    """Every agency 511 publishes, mapped to when its feed was last generated."""
+    resp = _get(_LIST_URL, token, format="json")
+    return {o["Id"]: o.get("LastGenerated") or "" for o in json.loads(resp.content.decode("utf-8-sig"))
+            if o["Id"] not in EXCLUDED}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--operators", default=",".join(OPERATORS))
+    parser.add_argument("--all", action="store_true", help="rebuild every agency, changed or not")
+    parser.add_argument("--operators", help="comma-separated agency ids to rebuild")
     parser.add_argument("--from-dir", help="read <dir>/<OP>.zip instead of downloading")
-    parser.add_argument("--check", action="store_true",
-                        help="verify the built data instead of building it")
+    parser.add_argument("--out", default=str(OUT_DIR), help="where to write")
+    parser.add_argument("--check", action="store_true", help="verify the built data instead of building")
     args = parser.parse_args()
     if args.check:
-        sys.exit(check(args.operators.split(",")))
+        sys.exit(check(Path(args.out)))
+
+    out = Path(args.out)
+    out.mkdir(exist_ok=True)
+    manifest_path = out / MANIFEST
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    if isinstance(manifest, list):                    # the single-file layout's summary
+        manifest = {}
 
     token = os.environ.get("TRAFFIC_511_TOKEN")
-    if not args.from_dir and not token:
+    if not token and not args.from_dir:
         sys.exit("TRAFFIC_511_TOKEN is not set (load .env with: set -a && . ./.env && set +a)")
+    listed = published(token) if token else {}
 
-    index = {"feeds": [], "stops": [], "routes": [], "services": [], "shapes": [], "patterns": []}
-    times = array("i")
-    for op in args.operators.split(","):
-        z = zipfile.ZipFile(Path(args.from_dir) / f"{op}.zip") if args.from_dir else fetch(op, token)
-        load_feed(op, z, index, times)
+    if args.operators:
+        wanted = args.operators.split(",")
+    elif args.all or not listed:
+        wanted = sorted(listed) if listed else sorted(p.stem for p in Path(args.from_dir).glob("*.zip"))
+    else:
+        wanted = sorted(op for op, generated in listed.items()
+                        if manifest.get(op, {}).get("generated") != generated)
 
-    if sys.byteorder != "little":
-        times.byteswap()                      # stored little-endian regardless of build machine
-    OUT_DIR.mkdir(exist_ok=True)
-    _write_gz(OUT_DIR / "index.json.gz", json.dumps(index, separators=(",", ":")).encode("utf-8"))
-    _write_gz(OUT_DIR / "times.bin.gz", times.tobytes())
-    # A small readable summary, so a refresh commit shows at a glance which
-    # agency published what, and until when it runs.
-    (OUT_DIR / "feeds.json").write_text(json.dumps(index["feeds"], indent=2) + "\n")
-    sizes = {p.name: f"{p.stat().st_size / 1e6:.1f} MB" for p in OUT_DIR.iterdir()}
-    print(f"wrote {sizes}; {len(times)} stop times", file=sys.stderr)
+    built, failed = [], []
+    for op in wanted:
+        local = Path(args.from_dir) / f"{op}.zip" if args.from_dir else None
+        try:
+            if local and local.exists():
+                z = zipfile.ZipFile(local)
+            elif token:
+                z = zipfile.ZipFile(io.BytesIO(_get(_FEED_URL, token, operator_id=op).content))
+            else:
+                continue
+            index, times = build_agency(op, z)
+        except RateLimited:
+            print(f"::warning::511 rate limit reached at {op}; the rest will refresh next run", file=sys.stderr)
+            break
+        except Exception as exc:                      # one bad feed must not sink the others
+            level = "error" if op in MAJOR else "warning"
+            kept = "keeping its previous schedules" if op in manifest else "skipped"
+            message = str(exc).replace(token, "***") if token else str(exc)
+            print(f"::{level}::{op} could not be built ({message}); {kept}", file=sys.stderr)
+            failed.append(op)
+            continue
+        if not index["patterns"]:
+            print(f"::warning::{op} published no usable trips; skipped", file=sys.stderr)
+            continue
+        write_agency(out, op, index, times)
+        manifest[op] = {**index["feed"], "generated": listed.get(op, manifest.get(op, {}).get("generated"))}
+        built.append(op)
+
+    # An agency 511 no longer publishes is dropped rather than served stale.
+    if listed and not args.operators:
+        for op in sorted(set(manifest) - set(listed)):
+            for suffix in (".json.gz", ".bin.gz"):
+                (out / f"{op}{suffix}").unlink(missing_ok=True)
+            del manifest[op]
+            print(f"  {op} no longer published; removed", file=sys.stderr)
+
+    manifest_path.write_text(json.dumps(dict(sorted(manifest.items())), indent=2) + "\n")
+    summary = ", ".join(f"{manifest[op]['agency']} {manifest[op]['version']}" for op in built) or "nothing new"
+    print(f"built {len(built)} agencies: {summary}", file=sys.stderr)
+    # The nightly workflow uses this line for its commit message.
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+            fh.write(f"summary={summary}\n")
+    if any(op in MAJOR for op in failed):
+        sys.exit(1)
 
 
-def check(operators: list[str], warn_days: int = 14) -> int:
+def check(out: Path, warn_days: int = 14, fail_days: int = 3) -> int:
     """Sanity-check transit_data/ before it is committed. Returns an exit code.
 
-    Fails when an agency is missing, a known trip no longer plans, or the
-    schedules run out within `warn_days` — the last being the case where 511
-    hasn't published a newer feed yet and someone should look.
+    Errors (fail the run): a major agency missing, a known trip no longer
+    planning, or a major agency within `fail_days` of running out. Running
+    out within `warn_days` is only a warning: some agencies publish rolling
+    three-week feeds (VTA's ends about twenty days after it is generated) and
+    replace them a week or so before the end, so a two-week alarm would go red
+    in normal operation. Three days left with nothing newer is a real stall.
     """
     import transit
     from datetime import date, timedelta
 
+    transit._DATA_DIR = out
     problems = []
     data = transit._load()
     if data is None:
-        return print("no transit data built", file=sys.stderr) or 1
-    loaded = {f["operator"] for f in data["feeds"]}
-    problems += [f"{op} missing from the build" for op in operators if op not in loaded]
-    until = transit.data_until()
-    if until and date.fromisoformat(until) < date.today() + timedelta(days=warn_days):
-        problems.append(f"schedules expire {until}, within {warn_days} days, and 511 has nothing newer")
+        print("::error::no transit data built", file=sys.stderr)
+        return 1
+    loaded = {f["operator"]: f for f in data["feeds"]}
+    problems += [f"{op} ({AGENCY_SHORT[op]}) missing from the build" for op in MAJOR if op not in loaded]
+    soon = (date.today() + timedelta(days=warn_days)).strftime("%Y%m%d")
+    urgent = (date.today() + timedelta(days=fail_days)).strftime("%Y%m%d")
+    for op, feed in sorted(loaded.items()):
+        if feed.get("end") and feed["end"] < soon:
+            message = f"{feed['agency']} schedules end {feed['end']} and 511 has nothing newer yet"
+            if op in MAJOR and feed["end"] < urgent:
+                problems.append(message)
+            else:
+                print(f"::warning::{message}", file=sys.stderr)
     # Powell Station to the Ferry Building: served all day by BART and Muni Metro.
     sample = transit.plan((37.7844, -122.4079), (37.7956, -122.3934), alternatives=False)
     if not sample["routes"] and "walking" not in (sample.get("error") or ""):
         problems.append(f"sample trip failed: {sample.get('error')}")
     for p in problems:
         print(f"::error::{p}", file=sys.stderr)
-    print("check ok" if not problems else f"{len(problems)} problem(s)", file=sys.stderr)
+    print(f"{len(loaded)} agencies; " + ("check ok" if not problems else f"{len(problems)} problem(s)"),
+          file=sys.stderr)
     return 1 if problems else 0
 
 

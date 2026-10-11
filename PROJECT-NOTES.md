@@ -72,7 +72,7 @@ Being able to say this precisely is worth more than claiming everything is live.
 | Parking availability | **Invented** | Predicted, not measured — no live curb feed exists |
 | Break-in risk | **Invented** | Placeholder; real path is SFPD incident data |
 | Events (concerts, games) | **Invented** | Real path is Ticketmaster |
-| Transit directions | **Real** | Our own planner over Muni, BART and Caltrain schedules (511) — direct rides, scheduled times |
+| Transit directions | **Real** | Our own planner over every Bay Area agency's schedules (511) — up to two transfers, scheduled times |
 | Traffic baseline | **Invented** | Real path is Google Maps Routes API |
 | The AI trip brief | **Off by choice** | Needs a paid Anthropic API key; see §7 |
 
@@ -163,15 +163,19 @@ the walks dashed, and when there is more than one way to go, the options are
 listed with their times so you can switch between them.
 
 Mapbox has no transit directions at all. **The planner is our own**, running
-over the schedules Muni, BART and Caltrain publish through 511 — the same
-token that already feeds the traffic alerts.
+over the schedules every Bay Area agency publishes through 511 — 41 of them,
+from Muni and BART to AC Transit, SamTrans, VTA, Golden Gate, the ferries,
+SMART and the SFO AirTrain — on the same token that already feeds the traffic
+alerts. Trips like *BART to 12th St, then the AC Transit 12 to Jack London
+Square*, or *Golden Gate Transit to SMART up to Santa Rosa*, now plan.
 
 **How it works, in plain terms.** Transit agencies publish their whole system
 as open data (a format called GTFS): every stop, the exact shape of every line,
 and every scheduled trip. Muni alone is about 1.3 million "this bus is at this
-stop at this time" entries. A build step squeezes all three agencies into 1.6
-MB by noticing that most trips repeat the same list of stops — store the list
-once, then only the times. When you ask for directions:
+stop at this time" entries; the whole Bay Area is over three million. A build
+step squeezes them into 7.7 MB by noticing that most trips repeat the same list
+of stops — store the list once, then only the times. When you ask for
+directions:
 
 1. Find the stops within a short walk of home and of the destination.
 2. Find the lines that pass a stop near home and *later* a stop near the
@@ -223,19 +227,30 @@ it, not after.
 **It won't offer a bus for one stop** when walking is about as fast — it says
 so instead.
 
-**The schedules refresh themselves.** The agencies publish new timetables
-every few months. Every night a GitHub Action downloads the latest from 511,
-rebuilds, checks the result (every agency present, a known trip still plans,
-nothing about to expire), and commits only if the timetables actually changed —
-which redeploys the site. The build is made byte-for-byte reproducible so an
-unchanged timetable produces no commit at all. If anything fails, the job goes
-red and the previous schedules stay live. And if 511 ever stops publishing, the
-job fails two weeks before the data expires, while the site keeps working.
+**The schedules refresh themselves.** Each agency publishes new timetables on
+its own rhythm — VTA every few weeks, most every few months. Every night a
+GitHub Action asks 511 one question, "which agencies published something new
+since last time?", downloads only those (usually none), rebuilds just their
+files, checks the result, and commits — which redeploys the site. Three design
+choices make that work:
+
+- **One file per agency.** A new Muni timetable is a Muni-sized commit, not a
+  rebuild of the whole region; the repository doesn't balloon.
+- **Ask before downloading.** The 511 token allows 60 requests an hour and the
+  live site's traffic alerts use the same one. Forty downloads a night would
+  eat most of that; one question plus the occasional download doesn't.
+- **Reproducible output.** The same timetable always produces byte-identical
+  files, so "nothing changed" is exactly "no commit".
+
+If a major agency fails, or one is three days from running out with nothing
+newer, the job goes red and the previous schedules stay live. Getting close
+(two weeks) is only a yellow warning — VTA's feeds normally run out about three
+weeks after they're published, and a two-week alarm would have been red every
+time.
 
 **Not yet:** live delays. 511 publishes real-time arrivals and service alerts
 for every Bay Area operator, which is what would let an alert say "BART is
-running 15 minutes late." Also not yet: AC Transit, SamTrans and the ferries,
-so Oakland's waterfront and much of the East Bay show "no stop near".
+running 15 minutes late."
 
 ### Privacy, persistence, and plumbing
 Three fixes that came out of deploying it:
@@ -336,6 +351,24 @@ minutes past the hour, off the slot GitHub is busiest in.
 One care point: the repository is public, so the job's logs are too. It prints
 counts only, never trip names or times.
 
+### The 25 to Treasure Island vanished
+Adding transfers, one result read "take the 25, then change to the 25" — clearly
+wrong, so the search was told never to change from a line onto itself. The
+next test showed the 25 had disappeared from Treasure Island trips entirely.
+The data explained it: the 25 runs out to the island as one trip and loops
+back as the next, and the island's stops are only listed on the way back. So
+"25, then 25" was really *stay on the bus*. The fix was the opposite of the
+first one — allow it, and show the two pieces as one ride. Lesson: an output
+that looks wrong can be a correct answer worded badly; check the data before
+forbidding it.
+
+### The 511 token nearly went into a public log
+One small agency's feed returned "not found", and the error message printed
+the full request address — which carries the token. Locally that's harmless;
+the nightly job runs in a public repository whose logs anyone can read. Errors
+from that code now name the status and the endpoint, never the address as
+sent.
+
 **The pattern across all of these:** every one was a *silent* failure. Nothing
 crashed. The app kept looking correct while serving wrong or fake data. Most of
 the real work was making failures announce themselves.
@@ -353,8 +386,8 @@ non-Google map, so using it would mean either breaking those terms or
 replacing Mapbox, the custom dark map, with Google Maps. The planner runs on
 open data that can be drawn anywhere, costs nothing per request, and builds
 understanding of how transit routing actually works. The trade-off: no live
-delays yet, three agencies rather than all of them, and a nightly job that has
-to keep the timetables current.
+delays yet, and a nightly job that has to keep forty agencies' timetables
+current.
 
 ### Calendars over secret links, not "Sign in with Google"
 Google Calendar cannot be read with an API key — personal data requires OAuth,

@@ -1,8 +1,9 @@
 """
 Transit directions from open schedule data — our own planner.
 
-The schedules come from 511 SF Bay's GTFS feeds (Muni, BART, Caltrain), built
-into `transit_data/` by gtfs_build.py. Open data can be drawn on any map,
+The schedules come from 511 SF Bay's GTFS feeds — every Bay Area agency 511
+publishes, one file pair each — built into `transit_data/` by gtfs_build.py
+and merged here when first needed. Open data can be drawn on any map,
 unlike Google's Routes API, whose terms forbid showing its results on or near
 a non-Google map — which this Mapbox app is.
 
@@ -62,7 +63,7 @@ CHANGE_S = 2 * 60         # time to make a connection
 MAX_RIDES = 3             # at most two transfers
 SEARCH_WINDOW_S = 3 * 3600  # don't offer a ride hours away
 WORTH_RIDING_S = 3 * 60     # a ride must beat walking the whole way by this much
-TRANSFER_WORTH_S = 5 * 60   # a transfer must save this much over a direct ride
+TRANSFER_WORTH_S = 5 * 60   # each extra transfer must save this much
 
 _CACHE_TTL_S = 120
 _cache: dict = {}
@@ -81,57 +82,107 @@ _HISTORIC_STREETCARS = {"E", "F"}   # Muni's heritage lines, type 0 like the Met
 # Loading
 # ---------------------------------------------------------------------------
 
+# The agencies whose expiry matters for "is transit working" — the rest run
+# out on their own dates without taking anything else down.
+MAJOR = ("SF", "BA", "CT", "AC", "SM", "SC", "GG")
+
+
 def available() -> bool:
-    return (_DATA_DIR / "index.json.gz").exists() and (_DATA_DIR / "times.bin.gz").exists()
+    return (_DATA_DIR / "feeds.json").exists()
 
 
 def _load() -> dict | None:
-    """Read the index once, on first use rather than at startup, so the app
-    still boots fast after a free-tier spin-down."""
+    """Merge every agency's files once, on first use rather than at startup,
+    so the app still boots fast after a free-tier spin-down.
+
+    Each agency's ids are local to it; merging shifts them past the agencies
+    already loaded. Numbers go into `array`s rather than Python lists — a
+    list spends about 36 bytes per small integer, an array 4 — which is the
+    difference between fitting comfortably in a 512 MB server and not.
+    """
     global _data
     if _data is not None or not available():
         return _data
     with _lock:
         if _data is not None:
             return _data
-        with gzip.open(_DATA_DIR / "index.json.gz", "rt", encoding="utf-8") as fh:
-            index = json.load(fh)
+        manifest = json.loads((_DATA_DIR / "feeds.json").read_text())
+        stops, routes, services, shapes, patterns, feeds = [], [], [], [], [], []
         times = array("i")
-        with gzip.open(_DATA_DIR / "times.bin.gz", "rb") as fh:
-            times.frombytes(fh.read())
-        if sys.byteorder != "little":
-            times.byteswap()
+        for op in sorted(manifest):
+            try:
+                with gzip.open(_DATA_DIR / f"{op}.json.gz", "rt", encoding="utf-8") as fh:
+                    part = json.load(fh)
+                chunk = array("i")
+                with gzip.open(_DATA_DIR / f"{op}.bin.gz", "rb") as fh:
+                    chunk.frombytes(fh.read())
+            except OSError:
+                continue                              # listed but missing: plan without it
+            if sys.byteorder != "little":
+                chunk.byteswap()
+            s0, r0, v0, h0, t0 = len(stops), len(routes), len(services), len(shapes), len(times)
+            stops += part["stops"]
+            routes += part["routes"]
+            services += part["services"]
+            shapes += [array("i", sh) for sh in part["shapes"]]
+            times += chunk
+            for pat in part["patterns"]:
+                patterns.append({
+                    "route": pat["route"] + r0, "headsign": pat["headsign"],
+                    "stops": array("i", (x + s0 for x in pat["stops"])),
+                    "shape": None if pat["shape"] is None else pat["shape"] + h0,
+                    "vertices": None if pat["vertices"] is None else array("i", pat["vertices"]),
+                    "svc": array("i", (x + v0 for x in pat["svc"])),
+                    "off": array("i", (x + t0 for x in pat["off"])),
+                })
+            feeds.append({"operator": op, **manifest[op]})
+            del part, chunk
 
-        at_stop: list[list[tuple[int, int]]] = [[] for _ in index["stops"]]
-        for p, pat in enumerate(index["patterns"]):
+        at_stop: list[list[tuple[int, int]]] = [[] for _ in stops]
+        for p, pat in enumerate(patterns):
             for pos, stop in enumerate(pat["stops"]):
                 at_stop[stop].append((p, pos))
 
         # A coarse grid (~1 km cells) so "stops near here" checks a handful of
         # cells instead of every stop in the region.
         grid: dict[tuple[int, int], list[int]] = {}
-        for s, (_, lat, lon) in enumerate(index["stops"]):
+        for s, (_, lat, lon) in enumerate(stops):
             grid.setdefault((int(lat * 100), int(lon * 100)), []).append(s)
 
-        for svc in index["services"]:
+        for svc in services:
             svc["add"], svc["remove"] = set(svc["add"]), set(svc["remove"])
 
-        _data = {**index, "times": times, "at_stop": at_stop, "grid": grid,
-                 "active": {}, "day_trips": {}}
-        # Walking connections between nearby stops, for changing lines.
-        _data["walks"] = [
-            [(n, w) for n, w in _stops_near(_data, lat, lon, TRANSFER_M).items() if n != s]
-            for s, (_, lat, lon) in enumerate(index["stops"])
-        ]
+        _data = {"stops": stops, "routes": routes, "services": services, "shapes": shapes,
+                 "patterns": patterns, "feeds": feeds, "times": times, "at_stop": at_stop,
+                 "grid": grid, "active": {}, "day_trips": {}, "walks": {}}
         return _data
 
 
+def _walks_from(data: dict, s: int) -> list[tuple[int, float]]:
+    """Walking connections from stop `s` to nearby stops, for changing lines —
+    worked out the first time a search needs them rather than for all twenty
+    thousand stops up front."""
+    walks = data["walks"].get(s)
+    if walks is None:
+        _, lat, lon = data["stops"][s]
+        walks = data["walks"][s] = [(n, w) for n, w in _stops_near(data, lat, lon, TRANSFER_M).items()
+                                    if n != s]
+    return walks
+
+
+def agencies() -> int:
+    data = _load() if available() else None
+    return len(data["feeds"]) if data else 0
+
+
 def data_until() -> str | None:
-    """The earliest date any loaded feed stops covering, as YYYY-MM-DD."""
+    """The earliest date a major agency's schedules stop covering, as
+    YYYY-MM-DD. Smaller agencies expire on their own dates: their services
+    simply stop being active, and the rest keeps planning."""
     if not available():
         return None
     data = _load()
-    ends = [f["end"] for f in data["feeds"] if f.get("end")]
+    ends = [f["end"] for f in data["feeds"] if f.get("end") and f["operator"] in MAJOR]
     if not ends:
         return None
     end = min(ends)
@@ -385,7 +436,7 @@ def _raptor(data: dict, day: date, starts: dict[int, float], ends: dict[int, flo
         # walk expects to find a ride at the stop it started from.
         rode = dict(improved)
         for s, arr in rode.items():
-            for n, w in data["walks"][s]:
+            for n, w in _walks_from(data, s):
                 t = arr + w
                 if n not in rode and t < best.get(n, (_INF,))[0] and t < best_total:
                     best[n] = (t, k)
@@ -439,13 +490,18 @@ def _transfers(data: dict, day: date, target_s: int, arrive_by: bool,
     for _, search_legs in found:
         legs = _real_legs(data, search_legs, arrive_by, near_o, near_d)
         rides = [leg for leg in legs if leg[0] == "ride"]
+        # A line split into two patterns where they meet — the 25 runs out to
+        # Treasure Island as one trip and loops back as the next — is one
+        # ride to the rider: staying on, not transferring. _build merges them.
+        lines = [data["patterns"][r[1]]["route"] for r in rides]
+        lines = [x for i, x in enumerate(lines) if i == 0 or x != lines[i - 1]]
         times = data["times"]
         first, last = rides[0], rides[-1]
         dep = times[first[2] + first[4]] - first[3]
         arr = times[last[2] + last[5]] - last[3]
         out.append({
-            "leave": dep - legs[0][3], "arrive": arr + legs[-1][3], "rides": len(rides),
-            "lines": tuple(data["patterns"][r[1]]["route"] for r in rides),
+            "leave": dep - legs[0][3], "arrive": arr + legs[-1][3], "rides": len(lines),
+            "lines": tuple(lines),
             "legs": legs,
         })
     return out
@@ -520,8 +576,24 @@ def _build(data: dict, day: date, journey: dict, origin, destination) -> dict:
                    for w in walks]
         walked = iter([f.result() for f in futures])
 
-    segments = []
+    segments, previous = [], None
     for leg in legs:
+        if leg[0] == "ride" and previous and previous[0] == "ride" \
+                and data["patterns"][previous[1]]["route"] == data["patterns"][leg[1]]["route"]:
+            # Same line, same stop, straight after: the rider stays on board.
+            _, p, off, shift, i, j = leg
+            pat, ride = data["patterns"][p], segments[-1]
+            more = _ride_coords(data, pat, i, j)
+            arrive = _at(day, times[off + j] - shift)
+            ride.update({"to_stop": stops[pat["stops"][j]][0], "stops": ride["stops"] + j - i,
+                         "arrive": arrive.isoformat(), "arrive_text": _clock(arrive),
+                         "duration_s": int((arrive - datetime.fromisoformat(ride["depart"])).total_seconds()),
+                         "distance_m": ride["distance_m"] + round(sum(
+                             _meters(a[1], a[0], b[1], b[0]) for a, b in zip(more, more[1:]))),
+                         "coords": ride["coords"] + more[1:]})
+            previous = leg
+            continue
+        previous = leg
         if leg[0] == "walk":
             done = next(walked)
             if leg[1] is not None and leg[2] is not None and leg[1] == leg[2]:
@@ -592,9 +664,10 @@ def plan(origin: tuple[float, float], destination: tuple[float, float],
         when = datetime.now(_PACIFIC).replace(tzinfo=None)
     day, target = when.date(), when.hour * 3600 + when.minute * 60 + when.second
 
-    until = data_until()
-    if until and day.isoformat() > until:
-        return {"routes": [], "error": f"transit schedules expired on {until}; rebuild with gtfs_build.py"}
+    # No blanket expiry check: every service carries its own end date, so an
+    # agency whose schedules have run out simply stops contributing trips
+    # while the others keep planning. /api/health and the nightly check are
+    # what notice an expiry.
 
     cache_key = (round(origin[0], 4), round(origin[1], 4), round(destination[0], 4),
                  round(destination[1], 4), arrive_by or when.strftime("%Y-%m-%dT%H:%M"), alternatives)
@@ -604,9 +677,9 @@ def plan(origin: tuple[float, float], destination: tuple[float, float],
 
     near_o, near_d = _stops_near(data, *origin), _stops_near(data, *destination)
     if not near_o:
-        result = {"routes": [], "error": "no Muni, BART or Caltrain stop within a short walk of home"}
+        result = {"routes": [], "error": "no transit stop within a short walk of home"}
     elif not near_d:
-        result = {"routes": [], "error": "no Muni, BART or Caltrain stop within a short walk of the destination"}
+        result = {"routes": [], "error": "no transit stop within a short walk of the destination"}
     else:
         result = {"routes": [_build(data, day, j, origin, destination)
                              for j in _choose(data, day, target, bool(arrive_by), near_o, near_d,
@@ -641,14 +714,14 @@ def _choose(data, day, target, arrive_by, near_o, near_d, origin, destination, l
         per_line.setdefault(j["lines"], j)
     options = sorted(per_line.values(), key=rank)
 
-    # A transfer is only worth it if it clearly beats the best direct ride,
-    # or there is no direct ride at all.
-    best_direct = options[0] if options else None
-    for j in sorted((j for j in found if j["rides"] > 1), key=rank):
-        if best_direct is None:
-            options.append(j)
-        elif arrive_by and j["leave"] - best_direct["leave"] >= TRANSFER_WORTH_S:
-            options.append(j)
-        elif not arrive_by and best_direct["arrive"] - j["arrive"] >= TRANSFER_WORTH_S:
+    # Every extra change of line has to earn its place: a journey is kept
+    # only if it beats everything with fewer rides by TRANSFER_WORTH_S —
+    # leaving that much later, or arriving that much sooner. Two transfers to
+    # leave three minutes later than one transfer isn't worth it.
+    gain = (lambda j, other: j["leave"] - other["leave"]) if arrive_by \
+        else (lambda j, other: other["arrive"] - j["arrive"])
+    for j in sorted((j for j in found if j["rides"] > 1), key=lambda j: (j["rides"], rank(j))):
+        fewer = [o for o in options if o["rides"] < j["rides"]]
+        if all(gain(j, o) >= TRANSFER_WORTH_S for o in fewer):
             options.append(j)
     return sorted(options, key=rank)[:limit]

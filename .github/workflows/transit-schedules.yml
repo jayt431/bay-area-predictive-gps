@@ -1,19 +1,22 @@
 # Keep the transit schedules current.
 #
-# Muni, BART and Caltrain publish new timetables every few months through 511.
-# Each night this rebuilds transit_data/ from the latest feeds. The build is
-# byte-for-byte reproducible, so an unchanged feed produces no diff and no
-# commit; a new timetable produces a commit, and that push redeploys Render.
+# About forty Bay Area agencies publish timetables through 511, each on its
+# own schedule. Each night this asks 511 which feeds changed (one request),
+# downloads and rebuilds only those (usually none), and commits only their
+# files — so a new Muni timetable is a Muni-sized commit, and the push
+# redeploys Render. The build is byte-for-byte reproducible, so an unchanged
+# feed is never a diff.
 #
 # A red run means one of:
-#   - the download or build failed (511 down, token rejected)
-#   - the result failed its check: an agency missing, a known trip no longer
-#     planning, or schedules within 14 days of expiring with nothing newer
+#   - a major agency (Muni, BART, Caltrain, AC Transit, SamTrans, VTA, Golden
+#     Gate) failed to download or build — smaller ones are warnings
+#   - the check failed: a major agency missing, a known trip no longer
+#     planning, or a major agency within 14 days of running out
 # In every case the previous, committed schedules stay live.
 #
 # Setup: add TRAFFIC_511_TOKEN as a repository secret (Settings -> Secrets
-# and variables -> Actions), the same value as in .env and on Render. Three
-# requests a night, well inside 511's 60-per-hour limit.
+# and variables -> Actions), the same value as in .env and on Render. The
+# token never appears in this job's output.
 name: Transit schedules
 
 on:
@@ -41,7 +44,8 @@ jobs:
       - name: Install
         run: pip install requests python-dateutil
 
-      - name: Rebuild from 511
+      - name: Rebuild what 511 changed
+        id: build
         env:
           TRAFFIC_511_TOKEN: ${{ secrets.TRAFFIC_511_TOKEN }}
         run: |
@@ -55,14 +59,17 @@ jobs:
         run: python gtfs_build.py --check
 
       - name: Commit if the schedules changed
+        env:
+          SUMMARY: ${{ steps.build.outputs.summary }}
         run: |
-          if git diff --quiet -- transit_data; then
+          # status, not diff: a newly added agency is an untracked file,
+          # which diff would not see.
+          if [ -z "$(git status --porcelain -- transit_data)" ]; then
             echo "No new schedules published."
             exit 0
           fi
-          versions=$(python -c "import json; print(', '.join(f\"{f['agency']} {f['version']} (to {f['end']})\" for f in json.load(open('transit_data/feeds.json'))))")
           git config user.name "transit-schedules bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add transit_data
-          git commit -m "Refresh transit schedules" -m "$versions"
+          git add -A transit_data
+          git commit -m "Refresh transit schedules" -m "$SUMMARY"
           git push

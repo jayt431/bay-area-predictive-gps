@@ -71,8 +71,10 @@ def health():
         "weather_key": bool(os.environ.get("OPENWEATHER_API_KEY")),
         "news_key": bool(os.environ.get("NEWSAPI_KEY")),
         "traffic_511": bool(os.environ.get("TRAFFIC_511_TOKEN")),
-        # The date the bundled Muni/BART/Caltrain schedules stop covering.
-        # Past it, transit answers "expired" until gtfs_build.py is rerun.
+        # How many agencies' schedules are loaded, and the earliest date a
+        # major one (Muni, BART, Caltrain, AC, SamTrans, VTA, Golden Gate)
+        # stops covering. The nightly refresh should keep that moving forward.
+        "transit_agencies": transit.agencies(),
         "transit_data_until": transit.data_until(),
         # "sqlite" in production means scheduled trips vanish on restart.
         "schedule_storage": "postgres" if store.using_postgres() else "sqlite",
@@ -85,8 +87,8 @@ def health():
 
 @app.route("/api/transit")
 def transit_directions():
-    """Direct-ride transit options from home to a destination, step by step,
-    planned over the bundled 511 schedules (Muni, BART, Caltrain)."""
+    """Transit options from home to a destination, step by step, with up to
+    two transfers, planned over every Bay Area agency's 511 schedules."""
     try:
         lat, lon = float(request.args["dest_lat"]), float(request.args["dest_lon"])
     except (KeyError, TypeError, ValueError):

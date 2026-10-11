@@ -1,23 +1,289 @@
-[
-  {
-    "operator": "SF",
-    "agency": "Muni",
-    "start": "20260829",
-    "end": "20270115",
-    "version": "20260829"
+{
+  "3D": {
+    "agency": "Tri Delta",
+    "start": "20260809",
+    "end": "20271231",
+    "version": "20260810",
+    "generated": "8/10/2026 7:13:29 PM"
   },
-  {
-    "operator": "BA",
+  "AC": {
+    "agency": "AC Transit",
+    "start": "20260809",
+    "end": "20270403",
+    "version": "20260809",
+    "generated": "8/9/2026 1:08:14 AM"
+  },
+  "AF": {
+    "agency": "Angel Island Ferry",
+    "start": "20220401",
+    "end": "20261231",
+    "version": "20260830",
+    "generated": "8/30/2026 3:13:06 PM"
+  },
+  "AM": {
+    "agency": "Capitol Corridor",
+    "start": "20260302",
+    "end": "20270103",
+    "version": "20261006",
+    "generated": "10/6/2026 10:20:00 AM"
+  },
+  "BA": {
     "agency": "BART",
     "start": "20260810",
     "end": "20270110",
-    "version": "20260809"
+    "version": "20260809",
+    "generated": "8/9/2026 9:18:37 PM"
   },
-  {
-    "operator": "CT",
+  "CC": {
+    "agency": "County Connection",
+    "start": "20260823",
+    "end": "20270109",
+    "version": "20260822",
+    "generated": "8/22/2026 9:22:31 PM"
+  },
+  "CE": {
+    "agency": "ACE",
+    "start": "20250101",
+    "end": "20261231",
+    "version": "20261009",
+    "generated": "10/9/2026 4:08:00 PM"
+  },
+  "CM": {
+    "agency": "Commute.org",
+    "start": "20260307",
+    "end": "20270101",
+    "version": "20260810",
+    "generated": "8/10/2026 1:53:33 PM"
+  },
+  "CT": {
     "agency": "Caltrain",
     "start": "20260131",
     "end": "20270131",
-    "version": "20260922"
+    "version": "20260922",
+    "generated": "9/22/2026 11:56:13 AM"
+  },
+  "DE": {
+    "agency": "Dumbarton Express",
+    "start": "20260810",
+    "end": "20270108",
+    "version": "20260809",
+    "generated": "8/9/2026 9:21:13 PM"
+  },
+  "EE": {
+    "agency": "Emery Express",
+    "start": "20250101",
+    "end": "20261231",
+    "version": "20260810",
+    "generated": "8/10/2026 7:15:18 PM"
+  },
+  "EM": {
+    "agency": "Emery Go-Round",
+    "start": "20231224",
+    "end": "20271127",
+    "version": "20260123",
+    "generated": "1/23/2026 9:51:20 AM"
+  },
+  "FS": {
+    "agency": "FAST",
+    "start": "20260701",
+    "end": "20270630",
+    "version": "20260928",
+    "generated": "9/28/2026 2:19:31 PM"
+  },
+  "GF": {
+    "agency": "Golden Gate Ferry",
+    "start": "20260614",
+    "end": "20261212",
+    "version": "20260908",
+    "generated": "9/8/2026 10:35:11 AM"
+  },
+  "GG": {
+    "agency": "Golden Gate Transit",
+    "start": "20260614",
+    "end": "20261212",
+    "version": "20260908",
+    "generated": "9/8/2026 10:23:13 AM"
+  },
+  "GP": {
+    "agency": "Rec & Park",
+    "start": "20251229",
+    "end": "20261231",
+    "version": "20251230",
+    "generated": "12/30/2025 10:06:29 AM"
+  },
+  "MA": {
+    "agency": "Marin Transit",
+    "start": "20260913",
+    "end": "20270110",
+    "version": "20260912",
+    "generated": "9/12/2026 9:14:06 PM"
+  },
+  "MB": {
+    "agency": "Mission Bay shuttle",
+    "start": "20250715",
+    "end": "20270112",
+    "version": "20260926",
+    "generated": "9/26/2026 10:08:17 AM"
+  },
+  "MC": {
+    "agency": "MV Community Shuttle",
+    "start": "20241129",
+    "end": "20271010",
+    "version": "20261009",
+    "generated": "10/9/2026 10:59:30 PM"
+  },
+  "MV": {
+    "agency": "MVgo",
+    "start": "20241111",
+    "end": "20270101",
+    "version": "20260730",
+    "generated": "7/30/2026 12:14:58 PM"
+  },
+  "PE": {
+    "agency": "Petaluma Transit",
+    "start": "20260810",
+    "end": "20991231",
+    "version": "20260910",
+    "generated": "9/10/2026 9:27:35 AM"
+  },
+  "PG": {
+    "agency": "PresidiGo",
+    "start": "20220530",
+    "end": "20261030",
+    "version": "20250108",
+    "generated": "1/8/2025 10:19:36 AM"
+  },
+  "RV": {
+    "agency": "Delta Breeze",
+    "start": "20210622",
+    "end": "20271231",
+    "version": "20260105",
+    "generated": "1/5/2026 9:53:23 AM"
+  },
+  "SA": {
+    "agency": "SMART",
+    "start": "20260412",
+    "end": "20270430",
+    "version": "20261005",
+    "generated": "10/5/2026 1:45:09 PM"
+  },
+  "SB": {
+    "agency": "SF Bay Ferry",
+    "start": "20260309",
+    "end": "20261101",
+    "version": "20261001",
+    "generated": "10/1/2026 7:02:08 PM"
+  },
+  "SC": {
+    "agency": "VTA",
+    "start": "20260810",
+    "end": "20261025",
+    "version": "20261005",
+    "generated": "10/5/2026 5:00:52 AM"
+  },
+  "SE": {
+    "agency": "Solano Express",
+    "start": "20260803",
+    "end": "20280731",
+    "version": "20261007",
+    "generated": "10/7/2026 11:14:00 AM"
+  },
+  "SF": {
+    "agency": "Muni",
+    "start": "20260829",
+    "end": "20270115",
+    "version": "20260829",
+    "generated": "8/29/2026 1:05:04 AM"
+  },
+  "SI": {
+    "agency": "SFO AirTrain",
+    "start": "20251104",
+    "end": "20291231",
+    "version": "20260601",
+    "generated": "6/1/2026 10:59:22 AM"
+  },
+  "SL": {
+    "agency": "LINKS",
+    "start": "20220701",
+    "end": "20290630",
+    "version": "20260409",
+    "generated": "4/9/2026 4:27:04 PM"
+  },
+  "SM": {
+    "agency": "SamTrans",
+    "start": "20260823",
+    "end": "20261114",
+    "version": "20260903",
+    "generated": "9/3/2026 10:17:35 PM"
+  },
+  "SO": {
+    "agency": "Sonoma County Transit",
+    "start": "20260811",
+    "end": "20270109",
+    "version": "20260811",
+    "generated": "8/11/2026 10:30:13 AM"
+  },
+  "SR": {
+    "agency": "Santa Rosa CityBus",
+    "start": "20260929",
+    "end": "20270213",
+    "version": "20261010",
+    "generated": "10/10/2026 10:11:31 AM"
+  },
+  "SS": {
+    "agency": "South City Shuttle",
+    "start": "20240624",
+    "end": "20270101",
+    "version": "20260618",
+    "generated": "6/18/2026 11:15:08 PM"
+  },
+  "ST": {
+    "agency": "SolTrans",
+    "start": "20260908",
+    "end": "20271231",
+    "version": "20261003",
+    "generated": "10/3/2026 10:41:34 AM"
+  },
+  "TF": {
+    "agency": "Treasure Island Ferry",
+    "start": "20260101",
+    "end": "20261231",
+    "version": "20260106",
+    "generated": "1/6/2026 1:07:33 PM"
+  },
+  "UC": {
+    "agency": "Union City Transit",
+    "start": "20260813",
+    "end": "20270816",
+    "version": "20260825",
+    "generated": "8/25/2026 10:20:05 AM"
+  },
+  "VC": {
+    "agency": "Vacaville City Coach",
+    "start": "20260618",
+    "end": "20261231",
+    "version": "20260924",
+    "generated": "9/24/2026 10:10:44 AM"
+  },
+  "VN": {
+    "agency": "VINE",
+    "start": "20261002",
+    "end": "20261230",
+    "version": "20261002",
+    "generated": "10/2/2026 11:04:48 AM"
+  },
+  "WC": {
+    "agency": "WestCAT",
+    "start": "20250809",
+    "end": "20270611",
+    "version": "20260903",
+    "generated": "9/3/2026 11:10:42 AM"
+  },
+  "WH": {
+    "agency": "Wheels",
+    "start": "20260921",
+    "end": "20270129",
+    "version": "20260922",
+    "generated": "9/22/2026 8:10:37 AM"
   }
-]
+}
