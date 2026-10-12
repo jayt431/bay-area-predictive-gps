@@ -978,7 +978,7 @@
       const bg = seg.color || "var(--accent)";
       const fg = seg.text_color || (seg.color ? "#fff" : "#05221e");
       return `<span class="tp-badge${mini ? " mini" : ""}" style="background:${escapeHtml(bg)};color:${escapeHtml(fg)}"
-                title="${escapeHtml(seg.line_name || seg.line)}">${escapeHtml(seg.line || seg.agency || seg.vehicle)}</span>`;
+                title="${escapeHtml(seg.line_name || seg.line)}">${escapeHtml(seg.line || (seg.vehicle === "Ferry" ? "Ferry" : seg.agency) || seg.vehicle)}</span>`;
     }
 
     function renderTransitPlan() {

@@ -538,8 +538,16 @@ def _real_legs(data: dict, search_legs: list, backward: bool, near_o: dict, near
 
 def _line_names(route: dict) -> tuple[str, str]:
     """(badge text, full name). BART and Caltrain have no rider-facing short
-    name, so their badge falls back to the agency in the page."""
+    name, so their badge falls back to the agency in the page; ferries' badge
+    reads "Ferry"."""
     short, long_name, agency = route["short"], route["long"], route["agency"]
+    if route["type"] == 4:
+        # Ferry codes mean nothing to riders ("LSSF", "VJO"); the route name
+        # does: "Larkspur – San Francisco". The page badges it "Ferry".
+        name = (long_name or short).replace(" - ", " – ")
+        if name.lower().endswith(" ferry"):
+            name = name[: -len(" ferry")]
+        return "", name
     if agency == "BART":
         color = short.split("-")[0]
         return "", (f"{color} line" if color and color[0].isupper() and "Bridge" not in short else long_name)
