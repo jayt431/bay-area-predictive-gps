@@ -94,7 +94,7 @@ Endpoints:
 | `GET /api/disruptions` | Bay Area disruption pool. Live 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else mocked |
 | `GET /api/parking?lat&lon` | Mocked parking zones (legacy; UI now uses meters) |
 | `GET /api/meters?lat&lon` | **Real** SF metered streets (DataSF), grouped by street |
-| `GET /api/transit?dest_lat&dest_lon` | Transit options from home, step by step, up to two transfers, every Bay Area agency (own planner over 511 GTFS). `{routes, error?}` |
+| `GET /api/transit?dest_lat&dest_lon` | Transit options from home, step by step, up to two transfers, every Bay Area agency (own planner over 511 GTFS), with live delays and service alerts laid over (`realtime.annotate`). `{routes, error?}` |
 | `GET /api/schedule` | Upcoming trips, calendar status, alert email |
 | `POST /api/schedule` | Add a manual trip (one-off `arrive_at`, or `days` + `time_of_day`) |
 | `DELETE /api/schedule/<id>` | Remove a trip |
@@ -450,8 +450,33 @@ directly in code.
     `alerts.route`) — because street incidents don't delay BART or a ferry and
     joining the parts would draw a false line across the tunnel. Scheduled
     transit trips plan with `arrive_by` = the trip's time, giving a "Leave by"
-    for the email and fallback brief. Schedules only; live delays (511
-    real-time) are next.
+    for the email and fallback brief.
+- **Live transit** (`realtime.py`): 511's GTFS-realtime trip updates and
+  service alerts, requested per agency with `format=json` (no protobuf
+  dependency; bodies carry a BOM). `/api/transit` passes a **deep copy** of the
+  plan to `annotate()` — the planner caches its result, and live data must
+  never be cached as schedule. Each ride gets `live`: status
+  (on_time / late / early / canceled / scheduled = no live data), delay at the
+  boarding stop, predicted departure and arrival (alight delay from the
+  continuing trip when a same-line ride was merged), `missed_connection` /
+  `tight_connection` (tight only when live data caused it), and alerts on its
+  route, its stops, or agency-wide. Each route gets `live.summary` from the
+  **most delayed** ride (the last ride often has no data yet, so it can't
+  decide "running to schedule"), `arrive_text`, `as_of`, and `warnings`.
+  Matching needs ids the index now keeps: GTFS `stop_id` (4th stop field),
+  `route_id`, and per-pattern `trips` (trip_ids). Only trips leaving within
+  90 min are annotated; the overnight alert job doesn't use live data.
+  - **The 511 budget**: one token, 60 requests/hour, shared with the traffic
+    feed. Every 511 call in the app goes through `realtime.record()` (the
+    traffic fetch in `mock_data` included); live transit may use at most
+    `REALTIME_PER_HOUR` = 25. Trip updates are cached 90 s, alerts 5 min;
+    when the budget is spent, data up to 15 min old is served with its
+    `as_of` time. `/api/health` reports `requests_511`. A higher limit can be
+    requested from 511 if real use outgrows this.
+  - The fallback brief treats a cancellation or missed connection as medium
+    risk ("take the next option, or leave earlier") and mentions 5+ minute
+    delays and alerts; the model prompt gets the same lines.
+  - Alert links from 511 are rendered only if they are `http(s)`.
 - **Disruptions**: pool in `mock_data` (`GET /api/disruptions`); frontend keeps
   those within 0.5km (red) / 2km (yellow) of the route line (Turf). Native GL
   circle/symbol layers, not HTML markers (fixes zoom jank). Bell + alert panel.

@@ -185,6 +185,9 @@ def _format_trip_context(ctx: dict) -> str:
         lines.append(f"Transit plan (leave {plan.get('leave_text') or 'now'}, "
                      f"arrive {plan.get('arrive_text') or '?'}):")
         lines.extend(f"  {i}. {step}" for i, step in enumerate(plan["steps"], 1))
+        if plan.get("live"):
+            lines.append("Live transit status right now:")
+            lines.extend(f"  - {l}" for l in plan["live"])
     parking = ctx.get("parking") or []
     lines.append("")
     lines.append("Parking near destination:")

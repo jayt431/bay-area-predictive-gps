@@ -418,6 +418,13 @@ def _fetch_511_events() -> list[dict] | None:
     if not token:
         _511_LAST_ERROR = "TRAFFIC_511_TOKEN not set"
         return None
+    # Live transit shares this token's 60/hour; it budgets around what this
+    # uses, so every call is reported (see realtime.py).
+    import realtime
+    if not realtime.allowed("traffic"):
+        _511_LAST_ERROR = "511 hourly request budget spent"
+        return None
+    realtime.record("traffic")
     try:
         resp = requests.get(
             _TRAFFIC_511_URL,

@@ -14,6 +14,7 @@ alert. Without it, returns the raw tool data so the app is always demoable.
 
 from __future__ import annotations
 
+import copy
 import hmac
 import os
 import re
@@ -26,6 +27,7 @@ from flask import Flask, jsonify, render_template, request
 
 import alerts
 import calendar_sync
+import realtime
 import transit
 import mock_data
 import scheduler
@@ -75,6 +77,9 @@ def health():
         # major one (Muni, BART, Caltrain, AC, SamTrans, VTA, Golden Gate)
         # stops covering. The nightly refresh should keep that moving forward.
         "transit_agencies": transit.agencies(),
+        # 511 requests in the last hour (the token allows 60), and how many
+        # of them were live transit rather than traffic.
+        "requests_511": realtime.usage(),
         "transit_data_until": transit.data_until(),
         # "sqlite" in production means scheduled trips vanish on restart.
         "schedule_storage": "postgres" if store.using_postgres() else "sqlite",
@@ -94,7 +99,10 @@ def transit_directions():
     except (KeyError, TypeError, ValueError):
         return jsonify({"routes": [], "error": "dest_lat and dest_lon are required"}), 400
     home = mock_data.HOME
-    return jsonify(transit.plan((home["lat"], home["lon"]), (lat, lon)))
+    plan = transit.plan((home["lat"], home["lon"]), (lat, lon))
+    # Live delays and alerts on top. A deep copy, because the planner caches
+    # its result and live data must never be cached as if it were schedule.
+    return jsonify(realtime.annotate(copy.deepcopy(plan)))
 
 
 @app.route("/api/routes")
@@ -360,9 +368,21 @@ def _fallback_brief(ctx: dict) -> dict:
             rec = {"drive": "Allow a little extra time for the conditions.",
                    "transit": "Bring an umbrella for the walk to and from the stops."
                    }.get(mode, "Bring a rain layer, or consider driving instead.")
+    # Live transit trouble: a cancelled ride or a missed connection is a real
+    # threat to the trip; a long delay or a service alert is worth a mention.
+    plan = ctx.get("transit") or {}
+    live = plan.get("live") or []
+    if live:
+        serious = any(("cancelled" in l) or ("miss the" in l) for l in live)
+        if serious:
+            risk = "high" if risk == "high" else "medium"
+            headline = live[0] + "."
+            rec = "Take the next option, or leave earlier."
+        elif risk == "none":
+            risk = "low"
+        why = _as_sentence(why) + " " + " ".join(_as_sentence(l) for l in live[:3])
     # For transit the plan itself is the most useful line: when to leave and
     # what to board.
-    plan = ctx.get("transit") or {}
     if plan.get("leave_text") and rec == "No action needed.":
         first_ride = next((s for s in plan.get("steps") or [] if s.startswith("Take")), None)
         rec = f"Leave by {plan['leave_text']}." + (f" {first_ride}." if first_ride else "")

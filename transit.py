@@ -126,8 +126,10 @@ def _load() -> dict | None:
             services += part["services"]
             shapes += [array("i", sh) for sh in part["shapes"]]
             times += chunk
+            p0 = len(patterns)
             for pat in part["patterns"]:
                 patterns.append({
+                    "op": op, "trips": pat.get("trips") or [],
                     "route": pat["route"] + r0, "headsign": pat["headsign"],
                     "stops": array("i", (x + s0 for x in pat["stops"])),
                     "shape": None if pat["shape"] is None else pat["shape"] + h0,
@@ -135,7 +137,10 @@ def _load() -> dict | None:
                     "svc": array("i", (x + v0 for x in pat["svc"])),
                     "off": array("i", (x + t0 for x in pat["off"])),
                 })
-            feeds.append({"operator": op, **manifest[op]})
+            # Where this agency sits in the merged lists, for matching live
+            # updates (which use the agency's own ids) back to them.
+            feeds.append({"operator": op, **manifest[op], "stops": (s0, len(stops)),
+                          "routes": (r0, len(routes)), "patterns": (p0, len(patterns))})
             del part, chunk
 
         at_stop: list[list[tuple[int, int]]] = [[] for _ in stops]
@@ -146,8 +151,8 @@ def _load() -> dict | None:
         # A coarse grid (~1 km cells) so "stops near here" checks a handful of
         # cells instead of every stop in the region.
         grid: dict[tuple[int, int], list[int]] = {}
-        for s, (_, lat, lon) in enumerate(stops):
-            grid.setdefault((int(lat * 100), int(lon * 100)), []).append(s)
+        for s, stop in enumerate(stops):
+            grid.setdefault((int(stop[1] * 100), int(stop[2] * 100)), []).append(s)
 
         for svc in services:
             svc["add"], svc["remove"] = set(svc["add"]), set(svc["remove"])
@@ -164,7 +169,7 @@ def _walks_from(data: dict, s: int) -> list[tuple[int, float]]:
     thousand stops up front."""
     walks = data["walks"].get(s)
     if walks is None:
-        _, lat, lon = data["stops"][s]
+        lat, lon = data["stops"][s][1], data["stops"][s][2]
         walks = data["walks"][s] = [(n, w) for n, w in _stops_near(data, lat, lon, TRANSFER_M).items()
                                     if n != s]
     return walks
@@ -248,7 +253,7 @@ def _stops_near(data: dict, lat: float, lon: float, reach_m: float = MAX_WALK_M)
     for dy in (-1, 0, 1):
         for dx in (-1, 0, 1):
             for s in data["grid"].get((cy + dy, cx + dx), ()):
-                _, slat, slon = data["stops"][s]
+                slat, slon = data["stops"][s][1], data["stops"][s][2]
                 d = _meters(lat, lon, slat, slon)
                 if d <= reach_m:
                     out[s] = d * DETOUR / WALK_SPEED_MPS
@@ -595,6 +600,11 @@ def _build(data: dict, day: date, journey: dict, origin, destination) -> dict:
             pat, ride = data["patterns"][p], segments[-1]
             more = _ride_coords(data, pat, i, j)
             arrive = _at(day, times[off + j] - shift)
+            # Live arrival at the far end comes from the continuing trip.
+            ride["alight_trip_id"] = pat["trips"][pat["off"].index(off)] if pat["trips"] else None
+            ride["alight_stop_id"] = stops[pat["stops"][j]][3] if len(stops[pat["stops"][j]]) > 3 else None
+            ride["stop_ids"] = ride["stop_ids"] + [stops[x][3] for x in pat["stops"][i + 1:j + 1]
+                                                   if len(stops[x]) > 3]
             ride.update({"to_stop": stops[pat["stops"][j]][0], "stops": ride["stops"] + j - i,
                          "arrive": arrive.isoformat(), "arrive_text": _clock(arrive),
                          "duration_s": int((arrive - datetime.fromisoformat(ride["depart"])).total_seconds()),
@@ -619,7 +629,15 @@ def _build(data: dict, day: date, journey: dict, origin, destination) -> dict:
         coords = _ride_coords(data, pat, i, j)
         depart = _at(day, times[off + i] - shift)
         arrive = _at(day, times[off + j] - shift)
+        trip_ix = pat["off"].index(off)
         segments.append({
+            # Ids for matching live updates and service alerts (realtime.py).
+            "op": pat["op"], "route_id": route.get("id"),
+            "trip_id": pat["trips"][trip_ix] if pat["trips"] else None,
+            "alight_trip_id": pat["trips"][trip_ix] if pat["trips"] else None,
+            "board_stop_id": board[3] if len(board) > 3 else None,
+            "alight_stop_id": alight[3] if len(alight) > 3 else None,
+            "stop_ids": [stops[x][3] for x in pat["stops"][i:j + 1]] if len(board) > 3 else [],
             "kind": "transit", "line": short, "line_name": full,
             "color": route["color"], "text_color": route["text_color"],
             "vehicle": "Streetcar" if short in _HISTORIC_STREETCARS and route["agency"] == "Muni"

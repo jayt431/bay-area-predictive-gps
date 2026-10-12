@@ -146,12 +146,15 @@ def build_agency(op: str, z: zipfile.ZipFile) -> tuple[dict, array]:
             continue
         parent = raw_stops.get(s.get("parent_station") or "")
         stop_ix[sid] = len(index["stops"])
-        index["stops"].append([(parent or s)["stop_name"], round(lat, 6), round(lon, 6)])
+        # The GTFS stop_id rides along so live updates, which name stops by
+        # id, can be matched to the schedule.
+        index["stops"].append([(parent or s)["stop_name"], round(lat, 6), round(lon, 6), sid])
 
     route_ix = {}
     for r in _rows(z, "routes.txt"):
         route_ix[r["route_id"]] = len(index["routes"])
         index["routes"].append({
+            "id": r["route_id"],              # service alerts name lines by id
             "agency": agency, "short": r.get("route_short_name") or "",
             "long": _title(r.get("route_long_name") or ""),
             "color": ("#" + r["route_color"]) if r.get("route_color") else None,
@@ -216,10 +219,11 @@ def build_agency(op: str, z: zipfile.ZipFile) -> tuple[dict, array]:
             pat = patterns[key] = {
                 "route": route_ix[trip["route_id"]], "headsign": key[1],
                 "stops": list(stop_seq), "shape": shape, "vertices": vertices,
-                "svc": [], "off": [],
+                "svc": [], "off": [], "trips": [],
             }
         pat["svc"].append(service(trip["service_id"]))
         pat["off"].append(len(times))
+        pat["trips"].append(trip_id)          # live trip updates are keyed by trip_id
         times.extend(v[2] for v in visits)
 
     index["patterns"] = list(patterns.values())
@@ -307,7 +311,10 @@ def main() -> None:
             if local and local.exists():
                 z = zipfile.ZipFile(local)
             elif token:
-                z = zipfile.ZipFile(io.BytesIO(_get(_FEED_URL, token, operator_id=op).content))
+                payload = _get(_FEED_URL, token, operator_id=op).content
+                if local:                             # keep it for the next offline rebuild
+                    local.write_bytes(payload)
+                z = zipfile.ZipFile(io.BytesIO(payload))
             else:
                 continue
             index, times = build_agency(op, z)

@@ -179,7 +179,26 @@ def transit_summary(plan: dict | None) -> dict | None:
         "leave_text": plan.get("leave_text"),
         "arrive_text": plan.get("arrive_text"),
         "steps": [describe_segment(s) for s in plan.get("segments") or []],
+        "live": live_summary(plan),
     }
+
+
+def live_summary(plan: dict) -> list[str]:
+    """What live data says about this trip, as sentences: cancellations and
+    missed connections first, then real delays (5+ min) and service alerts.
+    Empty when there's no live data or nothing worth saying."""
+    live = plan.get("live") or {}
+    lines = list(live.get("warnings") or [])
+    for seg in plan.get("segments") or []:
+        ride_live = seg.get("live") or {}
+        name = seg.get("line") or seg.get("line_name") or seg.get("agency")
+        delay = ride_live.get("delay_s")
+        if ride_live.get("status") == "late" and delay and delay >= 5 * 60:
+            lines.append(f"The {name} is running {round(delay / 60)} min late")
+        for alert in ride_live.get("alerts") or []:
+            if alert.get("header"):
+                lines.append(f"{seg.get('agency')} alert: {alert['header']}")
+    return lines
 
 
 def describe_segment(seg: dict) -> str:

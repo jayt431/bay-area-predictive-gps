@@ -119,6 +119,22 @@
     .tp-sub { font-size: 11px; color: var(--muted); line-height: 1.45; margin-top: 2px; }
     .tp-sub b { color: var(--ink); font-weight: 600; }
     .tp-note { font-size: 11px; color: var(--muted); margin-top: 8px; }
+    /* Live status */
+    .tp-live { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; margin-top: 3px; font-weight: 600; }
+    .tp-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .tp-live.ok { color: var(--green); }
+    .tp-live.late { color: var(--yellow); }
+    .tp-live.bad { color: var(--red); }
+    .tp-live.quiet { color: var(--muted); font-weight: 400; }
+    .tp-live.quiet::before { background: none; border: 1px solid currentColor; }
+    .tp-livehead { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .tp-livehead b { color: var(--ink); }
+    .tp-warn { margin-top: 8px; padding: 7px 9px; border-radius: 8px; font-size: 12px; line-height: 1.4;
+      background: rgba(255,59,48,0.12); color: #FF8A80; }
+    .tp-alert { margin-top: 5px; padding: 6px 8px; border-radius: 7px; background: rgba(255,176,32,0.10);
+      font-size: 11px; line-height: 1.4; color: var(--ink); }
+    .tp-alert b { color: var(--yellow); font-weight: 600; }
+    .tp-alert a { color: var(--muted); }
     .rs-stat .num { font-size: 22px; font-weight: 700; font-family: var(--mono); }
     .rs-stat .num small { font-size: 12px; color: var(--muted); font-weight: 400; }
     .rs-stat .cap { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
@@ -990,6 +1006,16 @@
       let html = plan.leave_text
         ? `<div class="tp-head">Leave <b>${plan.leave_text}</b> · Arrive <b>${plan.arrive_text}</b></div>`
         : "";
+      // Live: when the predictions are from, and the arrival as things are
+      // actually running. Warnings (a cancellation, a missed connection) up top.
+      const live = plan.live;
+      if (live && live.available) {
+        const later = live.arrive_text && live.arrive_text !== plan.arrive_text;
+        html += `<div class="tp-livehead">Live${live.as_of_text ? ` as of ${live.as_of_text}` : ""}${
+          live.summary ? ` · ${escapeHtml(live.summary)}` : ""}${
+          later ? ` · now arriving <b>${live.arrive_text}</b>` : ""}</div>`;
+      }
+      (live && live.warnings || []).forEach(w => { html += `<div class="tp-warn">${escapeHtml(w)}</div>`; });
       if (route.options.length > 1) {
         html += `<div class="tp-opts">` + route.options.map((o, i) => `
           <button class="tp-opt${i === transitChoice ? " on" : ""}" onclick="pickTransitOption(${i})">
@@ -1020,10 +1046,38 @@
           <div class="tp-t">${escapeHtml(name.trim())}${escapeHtml(kind)}${seg.headsign ? ` toward ${escapeHtml(seg.headsign)}` : ""}</div>
           <div class="tp-sub">Board at <b>${escapeHtml(seg.from_stop || "")}</b>${seg.depart_text ? ` · ${seg.depart_text}` : ""}</div>
           <div class="tp-sub">${seg.stops ? `${seg.stops} stop${seg.stops === 1 ? "" : "s"} · ` : ""}get off at <b>${escapeHtml(seg.to_stop || "")}</b>${seg.arrive_text ? ` · ${seg.arrive_text}` : ""}</div>
-          ${seg.agency ? `<div class="tp-sub">${escapeHtml(seg.agency)}</div>` : ""}</div></li>`;
-      }).join("") + `</ol><div class="tp-note">Scheduled times · Transit data from 511 SF Bay. Live delays aren't included yet.</div>`;
+          ${seg.agency ? `<div class="tp-sub">${escapeHtml(seg.agency)}</div>` : ""}
+          ${liveBadge(seg.live)}${liveAlerts(seg.live)}</div></li>`;
+      }).join("") + `</ol><div class="tp-note">Transit data and live predictions from 511 SF Bay.</div>`;
       box.innerHTML = html;
       box.hidden = false;
+    }
+
+    // One ride's live status, in a few words. No live data says so quietly:
+    // the time shown is the timetable's, not a prediction.
+    function liveBadge(live) {
+      if (!live) return "";
+      const mins = live.delay_s == null ? 0 : Math.round(Math.abs(live.delay_s) / 60);
+      if (live.status === "canceled") return `<div class="tp-live bad">Cancelled</div>`;
+      let text, cls;
+      if (live.status === "late") { text = `${mins} min late · departs ${live.depart_live_text}`; cls = "late"; }
+      else if (live.status === "early") { text = `${mins} min early · departs ${live.depart_live_text}`; cls = "late"; }
+      else if (live.status === "on_time") { text = "On time"; cls = "ok"; }
+      else { text = "Scheduled time · no live data yet"; cls = "quiet"; }
+      const missed = live.missed_connection ? `<div class="tp-live bad">May miss this connection</div>`
+        : live.tight_connection ? `<div class="tp-live late">Tight connection</div>` : "";
+      return `<div class="tp-live ${cls}">${escapeHtml(text)}</div>${missed}`;
+    }
+
+    function liveAlerts(live) {
+      return ((live && live.alerts) || []).map(a => {
+        const more = a.description && a.description !== a.header
+          ? ` ${escapeHtml(a.description.length > 160 ? a.description.slice(0, 157) + "…" : a.description)}` : "";
+        // Links come from 511's data; only ordinary web links become clickable.
+        const link = /^https?:\/\//i.test(a.url || "")
+          ? ` <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener noreferrer">More</a>` : "";
+        return `<div class="tp-alert"><b>${escapeHtml(a.header || "Service alert")}</b>${more}${link}</div>`;
+      }).join("");
     }
 
     function setMode(mode) {

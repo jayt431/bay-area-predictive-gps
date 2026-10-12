@@ -248,9 +248,34 @@ newer, the job goes red and the previous schedules stay live. Getting close
 weeks after they're published, and a two-week alarm would have been red every
 time.
 
-**Not yet:** live delays. 511 publishes real-time arrivals and service alerts
-for every Bay Area operator, which is what would let an alert say "BART is
-running 15 minutes late."
+### Live delays
+On top of the timetable, every ride now shows how it's actually running:
+"On time", "11 min late · departs 10:46 PM", or "Cancelled", plus any service
+alert on that line ("BART: expect 30-minute delays between Millbrae and Daly
+City after 9 pm"). The top of the plan sums it up — "The Yellow line is
+running 11 min late" — and, most usefully, it checks connections: if a late
+train means you'd reach your bus after it leaves, it says **"You may miss the
+72"**; if it just squeezes the change to a minute, **"Tight connection"**.
+
+This comes from 511's live feeds — the same standard (GTFS-realtime) every
+agency publishes, one request per agency returns every trip's predicted delay.
+Matching it to our timetable needed ids the build had been throwing away (each
+trip's and stop's id), so the schedules were rebuilt to keep them.
+
+**The real constraint was the request budget.** The 511 token allows 60
+requests an hour, and the map's traffic alerts already use up to 30. So every
+511 call in the app is now counted in one place, live transit gets at most 25
+an hour, predictions are reused for 90 seconds and alerts for 5 minutes, and
+it only asks about agencies in a trip someone is actually looking at. When the
+budget runs out, it shows slightly older data with its time ("Live as of 10:21
+PM") rather than pretending. If the app ever gets real traffic, 511 grants
+higher limits on request.
+
+**A wording bug worth remembering:** the first version said "running to
+schedule" while BART was 11 minutes late — because it judged by the *last*
+ride, an AC Transit bus whose trip hadn't started reporting yet. Now the
+summary comes from the most delayed ride, and a ride with no live data says
+"Scheduled time · no live data yet" instead of looking on time.
 
 ### Privacy, persistence, and plumbing
 Three fixes that came out of deploying it:
