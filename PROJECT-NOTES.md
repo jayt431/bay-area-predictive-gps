@@ -264,6 +264,28 @@ first "if I left at 8:30, how long?", then "if I left exactly that long before
 email a real **"Leave by 8:41 AM"**. Driving now has the same leave-by answer
 transit got earlier.
 
+### Working on a phone
+The page had no phone layout at all: on a phone-sized screen the schedule
+panel ran off the left edge, the route card sat under the top buttons, and the
+route card plus the search panel covered the whole map — you couldn't see the
+route you'd asked for. The map's "zoom to the route" also used desktop
+margins (380 pixels on the left), wider than the entire phone screen.
+
+Now a phone gets one bottom sheet at a time — search, or the route once you
+have one, with a × to go back — and the map stays visible above it. The top
+buttons shrink to icons, panels open as full-width sheets, and inputs are big
+enough that an iPhone doesn't zoom the page when you tap one. The map fits
+the route into whatever space is actually left. Getting that right uncovered
+two Mapbox quirks worth knowing: zoom margins are *remembered* by the map and
+silently affect every later camera move (which would have shoved the
+navigation view under the trip panel), and a route starts at the nearest
+road, so the home dot can sit outside the route line and get hidden under the
+sheet unless both ends are included.
+
+One genuine bug fell out too: tapping a destination before the map had
+finished loading crashed. On a slow phone connection that's an easy thing to
+do. Picking now waits for the map.
+
 ### A test suite that runs on every push
 Almost every bug this project hit was found by a check run once by hand and
 then thrown away — so nothing stopped the same bug coming back. Those checks

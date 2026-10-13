@@ -94,6 +94,17 @@
     /* Star toggle in the route summary */
     .rs-head { display: flex; justify-content: space-between; align-items: center; }
     .star-btn { background: none; border: none; cursor: pointer; color: var(--muted); padding: 2px; display: flex; }
+    .rs-actions { display: flex; align-items: center; gap: 6px; }
+    .rs-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1;
+      padding: 0 2px; }
+    .rs-close:hover { color: var(--ink); }
+    .phone-only { display: none; }
+    /* With a route open, the search panel only needs From and Destination;
+       the suggestion chips are for choosing one. That keeps it clear of the
+       route card on shorter windows. */
+    body.has-route #search-panel #saved-section,
+    body.has-route #search-panel #quick-row,
+    body.has-route #search-panel .quick-title { display: none !important; }
     .star-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; }
     .star-btn.on { color: var(--accent); }
     .star-btn.on svg { fill: var(--accent); stroke: var(--accent); }
@@ -112,7 +123,7 @@
     .mode-tab:hover:not(:disabled) { border-color: var(--accent); }
     .mode-tab.on { border-color: var(--accent); color: var(--accent); background: rgba(0,229,199,0.08); }
     .mode-tab:disabled { opacity: 0.4; cursor: default; }
-    #route-summary { max-height: calc(100vh - 290px); overflow-y: auto; }
+    #route-summary { max-height: calc(100vh - 230px); overflow-y: auto; }
     /* Transit itinerary */
     #transit-plan { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
     .tp-head { font-size: 13px; color: var(--muted); }
@@ -418,6 +429,37 @@
 
     .no-token { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink); text-align: center; padding: 40px; line-height: 1.6; }
     .no-token code { background: #222; padding: 2px 6px; border-radius: 4px; color: var(--accent); }
+    /* ---- Phones ----------------------------------------------------------
+       One bottom sheet at a time — search, or the route once there is one —
+       so the map stays visible above it; an icon-only top bar; side panels
+       become full-width sheets under it. Inputs are 16px because iOS zooms
+       the whole page into any smaller input you tap. */
+    @media (max-width: 640px) {
+      #search-panel { left: 8px; right: 8px; bottom: 8px; width: auto; padding: 14px; box-sizing: border-box; }
+      body.has-route #search-panel { display: none; }
+      #route-summary { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; box-sizing: border-box;
+        max-height: 50dvh; padding: 14px 16px; }
+      #sched-btn, #nearby-btn { top: 12px; width: 44px; height: 44px; padding: 0; justify-content: center;
+        gap: 0; font-size: 0; }
+      #sched-btn { right: 112px; }
+      #nearby-btn { right: 60px; }
+      #bell { top: 12px; right: 8px; width: 44px; height: 44px; }
+      #sched-panel, #feed-panel, #alert-panel { top: 64px; left: 8px; right: 8px; width: auto; box-sizing: border-box;
+        max-height: calc(100dvh - 80px); overflow-y: auto; }
+      #parking-panel { display: none !important; }
+      body.show-parking #parking-panel.open { display: block !important; top: 64px; left: 8px; right: 8px;
+        bottom: auto; width: auto; box-sizing: border-box; max-height: 40dvh; overflow-y: auto; }
+      .phone-only:not([hidden]) { display: inline-flex; }
+      input, select, textarea { font-size: 16px !important; }
+      .mode-tab { padding: 8px 0 7px; }
+      .time-seg button { padding: 9px 12px; font-size: 12px; }
+      .rs-close { font-size: 26px; padding: 0 4px; }
+      #trip-panel { top: 8px; left: 8px; right: 8px; bottom: auto; width: auto; max-height: 52dvh; }
+      #recenter-btn { right: 12px; }
+      .rs-parking { background: none; border: 1px solid var(--line); border-radius: 8px; color: var(--ink);
+        font-size: 12px; padding: 8px 10px; margin-top: 10px; cursor: pointer; align-items: center; gap: 6px; }
+      body.show-parking .rs-parking { border-color: var(--accent); color: var(--accent); }
+    }
   </style>
 </head>
 <body>
@@ -427,11 +469,14 @@
   <div id="route-summary" class="glass">
     <div class="rs-head">
       <span class="mono-label">Route</span>
-      <button id="star-btn" class="star-btn" onclick="toggleSaveCurrent()" title="Save destination">
-        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-        </svg>
-      </button>
+      <div class="rs-actions">
+        <button id="star-btn" class="star-btn" onclick="toggleSaveCurrent()" title="Save destination" aria-label="Save destination">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+        </button>
+        <button class="rs-close" onclick="clearRoute()" title="Close route" aria-label="Close route">×</button>
+      </div>
     </div>
     <div class="rs-dest" id="rs-dest">—</div>
     <div class="mode-tabs" id="mode-tabs"></div>
@@ -449,6 +494,7 @@
       <div class="rs-stat"><div class="num" id="rs-alerts">—</div><div class="cap">On route</div></div>
     </div>
     <div class="rs-when" id="rs-when"></div>
+    <button class="rs-parking phone-only" id="rs-parking" hidden onclick="toggleParkingSheet()">Parking near destination</button>
     <div class="rs-traffic" id="rs-traffic" hidden></div>
     <div id="transit-plan" hidden></div>
     <div id="brief">
@@ -687,6 +733,11 @@
     let disruptions = [];    // full Bay Area pool
     let suggIndex = -1;      // keyboard-highlighted suggestion
     let currentDest = null;  // the destination currently routed to
+    // Resolves once the map's sources and layers exist. On a slow phone
+    // connection someone can tap a destination before the map has loaded;
+    // picking waits for it instead of drawing into layers that aren't there.
+    let markMapReady;
+    const mapReady = new Promise(resolve => { markMapReady = resolve; });
 
     // Travel modes and the Mapbox Directions profile each routes with. Transit
     // has no Mapbox profile; it comes from our own planner over 511 schedule
@@ -826,6 +877,7 @@
 
         renderQuick();
         renderSaved();
+        markMapReady();
       });
 
       wireSearch();
@@ -939,6 +991,32 @@
       btn.classList.toggle("on", !!on);
       btn.title = on ? "Remove from saved" : "Save destination";
     }
+
+    // ---- Layout: phones get one bottom sheet; the map fits around it ----
+    const isPhone = () => window.matchMedia("(max-width: 640px)").matches;
+
+    // Room around a route when the map zooms to it. The desktop panels sit
+    // left and right; on a phone the route card is a sheet over the bottom,
+    // and desktop margins (380 px on the left) are wider than the screen.
+    function fitPadding() {
+      if (!isPhone()) return { top: 120, bottom: 160, left: 380, right: 360 };
+      const sheet = document.getElementById("route-summary").getBoundingClientRect().height || innerHeight * 0.45;
+      return { top: 72, bottom: Math.min(sheet, innerHeight * 0.5) + 36, left: 28, right: 28 };
+    }
+
+    // Close the route: back to the search sheet, nothing drawn.
+    function clearRoute() {
+      currentDest = null; tripRoute = null; routeOptions = {};
+      ["route", "dest", "alerts", "pstreets", "pbuildings", "pmeters"].forEach(id => {
+        if (map.getSource(id)) map.getSource(id).setData(emptyFC());
+      });
+      ["route-summary", "parking-panel"].forEach(id => document.getElementById(id).classList.remove("open"));
+      document.body.classList.remove("has-route", "show-parking", "trip-mode");
+      document.getElementById("search-input").value = "";
+      updateBell([]); renderAlertList([]); updateStar();
+    }
+
+    function toggleParkingSheet() { document.body.classList.toggle("show-parking"); }
 
     // ---- Where from: home, current location, or any place ----
     // Your real home and saved places live on the server behind the schedule
@@ -1062,9 +1140,12 @@
       closeSuggestions();
 
       currentDest = { name, lon, lat };
+      const picked = currentDest;
       updateStar();
       document.body.classList.remove("trip-mode");  // picking a new place exits any active trip
 
+      await mapReady;
+      if (currentDest !== picked) return;          // picked something else while waiting
       map.getSource("dest").setData(pt(lon, lat));
       await loadRoutes();
     }
@@ -1378,9 +1459,12 @@
 
       // Fit the map to the whole route
       const coords = line.coordinates;
-      const b = coords.reduce((bb, c) => bb.extend(c), new mapboxgl.LngLatBounds(coords[0], coords[0]));
+      // The route plus both ends: a route starts at the nearest road, which
+      // can sit well away from the home dot.
+      const b = coords.reduce((bb, c) => bb.extend(c), new mapboxgl.LngLatBounds(coords[0], coords[0]))
+        .extend([origin.lon, origin.lat]).extend([lon, lat]);
       lastRouteBounds = b;
-      map.fitBounds(b, { padding: { top: 120, bottom: 160, left: 380, right: 360 }, duration: 900 });
+      map.fitBounds(b, { padding: fitPadding(), duration: 900 });
 
       // Which disruptions fall near this route line?
       const lines = streetLines(route);
@@ -1427,6 +1511,9 @@
       });
 
       updateSummary(name, route, onRoute);
+      // On a phone the sheet's real height is only known now that it's shown;
+      // fit again so the route isn't hidden under it.
+      if (isPhone()) setTimeout(fitRoute, 0);
       updateBell(onRoute);
       renderAlertList(onRoute);
       // Parking only matters to a driver.
@@ -1504,6 +1591,8 @@
       ["pstreets", "pbuildings", "pmeters"].forEach(id => map.getSource(id).setData(emptyFC()));
       parkingShown = false;
       document.getElementById("parking-panel").classList.remove("open");
+      document.getElementById("rs-parking").hidden = true;
+      document.body.classList.remove("show-parking");
     }
 
     async function loadParking(lon, lat) {
@@ -1567,8 +1656,7 @@
     }
 
     function fitRoute() {
-      if (lastRouteBounds) map.fitBounds(lastRouteBounds,
-        { padding: { top: 120, bottom: 160, left: 380, right: 360 }, duration: 700 });
+      if (lastRouteBounds) map.fitBounds(lastRouteBounds, { padding: fitPadding(), duration: 700 });
     }
 
     // ---- Committed trip view: step-through navigation ----
@@ -1586,6 +1674,14 @@
       document.getElementById("trip-dist").textContent = ` · ${miles} mi`;
       document.getElementById("nav-drive").textContent = `▶ ${modeInfo().verb}`;
       document.getElementById("sim-tag").textContent = `◉ Simulating ${modeInfo().sim}`;
+      // fitBounds leaves its padding on the map, and every later camera move
+      // honours it. The route view's padding (a tall sheet at the bottom on a
+      // phone, wide side panels on a desktop) is wrong for navigating, where
+      // the trip panel sits on top on a phone and on the left on a desktop.
+      map.setPadding(isPhone()
+        ? { top: Math.round(document.getElementById("trip-panel").getBoundingClientRect().height) + 16,
+            bottom: 40, left: 0, right: 0 }
+        : { top: 0, bottom: 0, left: 380, right: 0 });
 
       renderTripBody();
       prepDrive();
@@ -1783,7 +1879,7 @@
       // and buildings still render.
       const pts = [currentDestPt, ...currentZones.map(z => [z.lon, z.lat])];
       const b = pts.reduce((bb, c) => bb.extend(c), new mapboxgl.LngLatBounds(pts[0], pts[0]));
-      map.fitBounds(b, { padding: 140, maxZoom: 16.5, duration: 800 });
+      map.fitBounds(b, { padding: isPhone() ? 60 : 140, maxZoom: 16.5, duration: 800 });
       map.once("idle", drawParkingGeometry);
       setTimeout(drawParkingGeometry, 1800); // backup if idle already fired
     }
@@ -1937,6 +2033,7 @@
 
     function renderParkingPanel(zones) {
       document.getElementById("parking-panel").classList.add("open");
+      document.getElementById("rs-parking").hidden = false;     // phones open it from the route card
       const list = document.getElementById("parking-list");
       const streets = zones.filter(z => z.type !== "garage").slice(0, 5);
       const garages = zones.filter(z => z.type === "garage").slice(0, 4);
@@ -1983,6 +2080,7 @@
     }
 
     function updateSummary(name, route, onRoute) {
+      document.body.classList.add("has-route");
       updateTraffic(route);
       // Leave → arrive. Transit's own plan shows this already.
       const when = document.getElementById("rs-when");

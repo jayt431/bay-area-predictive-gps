@@ -567,6 +567,24 @@ mocked `/api/parking`. Real SFPD incident data is the way to bring break-in
 risk back. Meter dots auto-render on routing; curb lines + garage outlines
 draw on arrival.
 
+- **Phones** (`@media (max-width: 640px)`, `isPhone()`): one bottom sheet at a
+  time — search, or the route card once there is one (`body.has-route`), with
+  × (`clearRoute()`) to go back — so the map stays visible above it. Icon-only
+  top bar; schedule / nearby / alerts become full-width sheets under it;
+  parking opens as a top sheet from a "Parking near destination" button
+  (`body.show-parking`). Inputs are 16px (iOS zooms into anything smaller).
+  **Map padding is layout-aware** (`fitPadding()`): desktop margins (380 px on
+  the left) are wider than a phone, which is what the "Map cannot fit within
+  canvas" console warning was. Two Mapbox details: `fitBounds` padding is
+  *stored* on the map and applies to every later camera move, so `startTrip`
+  sets navigation padding explicitly (`map.setPadding`); and the route's
+  bounds include both endpoints, since a route starts at the nearest road and
+  the home dot can sit outside its line. On phones the route is re-fitted
+  after the sheet appears (with `setTimeout`, not `requestAnimationFrame`,
+  which never fires in a background tab). On desktop, a route hides the
+  search panel's suggestion chips so it clears the route card on short
+  windows. `pickDestination` awaits `mapReady`, so a tap before the map has
+  loaded (slow phone networks) waits instead of throwing.
 - **Committed trip / navigation.** "▶ Start trip" enters a nav view over the
   route. Two modes share one camera: **step-through** (Prev/Next or click a step
   → eased fly to each maneuver, facing `bearing_after`) and **auto-drive**
