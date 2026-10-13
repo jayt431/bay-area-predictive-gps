@@ -575,46 +575,23 @@ def get_civic_events(lat: float, lon: float, radius: int = 1500,
 
 
 # ---------------------------------------------------------------------------
-# PARKING (mocked, phase 1)
+# PARKING — real metered streets (DataSF)
 #
-# Generates a few parking zones around whatever destination the user routed
-# to. Deterministic: the same destination always yields the same zones, so
-# the demo is stable. Phase 2 replaces this with real SF open data (street
-# sweeping schedules, garage occupancy, SFPD break-in incidents).
+# Meter locations are real (every SFMTA meter). Nothing here predicts how full
+# a street is or how safe it is: no live curb-occupancy feed exists, and the
+# earlier invented "availability" and "break-in risk" looked like data while
+# being derived from the letters of the street name. They were removed rather
+# than shown. Real break-in data (SFPD incident reports) is the path back.
 # ---------------------------------------------------------------------------
 
-_CLEANING_TIMES = ["Tue 8-10 AM", "Wed 12-2 PM", "Thu 9-11 AM", "Mon 2-4 PM", "None posted this week"]
-_DIR_LABELS = {"N": "North", "E": "East", "S": "South", "W": "West"}
-_DIR_ANGLES = [("N", 0), ("E", 90), ("S", 180), ("W", 270)]
-
-
-def _avail_note(avail: str, ptype: str) -> str:
-    if ptype == "garage":
-        return {"easy": "Garage, plenty of space", "moderate": "Garage, filling up",
-                "hard": "Garage, nearly full"}[avail]
-    return {"easy": "Street spots usually open", "moderate": "Street parking is tight",
-            "hard": "Street parking usually full"}[avail]
-
-
 _METERS_URL = "https://data.sf.gov/resource/8vzz-qzz9.json"
-
-
-def _predict_avail(name: str, count: int) -> str:
-    """Stable predicted availability (placeholder — real curb availability
-    isn't published). Deterministic per street so the demo stays stable."""
-    r = (sum(ord(c) for c in name) * 7 + count) % 10
-    return "easy" if r < 3 else "moderate" if r < 7 else "hard"
-
-
-def _predict_risk(name: str) -> str:
-    return "elevated" if sum(ord(c) for c in name) % 3 == 0 else "low"
 
 
 def get_metered_streets(lat: float, lon: float, radius: int = 350, max_streets: int = 6) -> dict:
     """Real metered street parking near a point, from SF's DataSF open data.
 
-    Locations are real (every SFMTA meter); availability is predicted, since no
-    live curb-availability feed exists. Meters are grouped by street.
+    Locations are real (every SFMTA meter), grouped by street. How full a
+    street is isn't published anywhere, so nothing here guesses at it.
     """
     params = {
         "$where": f"within_circle(shape,{lat},{lon},{radius}) AND on_offstreet_type='ON'",
@@ -640,53 +617,17 @@ def get_metered_streets(lat: float, lon: float, radius: int = 350, max_streets: 
     for name, pts in groups.items():
         clon = sum(p[0] for p in pts) / len(pts)
         clat = sum(p[1] for p in pts) / len(pts)
-        avail = _predict_avail(name, len(pts))
         streets.append({
             "street": name.title(),
             "count": len(pts),
             "lat": round(clat, 6),
             "lon": round(clon, 6),
-            "availability": avail,
-            "risk": _predict_risk(name),
             "note": "Metered — paid street parking",
             "meters": [[round(lo, 6), round(la, 6)] for lo, la in pts[:40]],
         })
     streets.sort(key=lambda s: s["count"], reverse=True)
     return {"streets": streets[:max_streets]}
 
-
-def get_parking(lat: float, lon: float) -> list[dict]:
-    """Return mocked parking zones around a destination point.
-
-    Availability drives the zone color; risk == 'elevated' flags a possible
-    break-in hotspot the frontend marks with a caution icon.
-    """
-    seed = int(round(lat, 3) * 1000) * 100000 + int(round(lon, 3) * 1000)
-    rng = random.Random(seed)
-    dirs = _DIR_ANGLES[:]
-    rng.shuffle(dirs)
-
-    zones = []
-    for i, (dname, ang) in enumerate(dirs):
-        dist_m = rng.uniform(180, 360)
-        dlat = (dist_m * math.cos(math.radians(ang))) / 111111.0
-        dlon = (dist_m * math.sin(math.radians(ang))) / (111111.0 * math.cos(math.radians(lat)))
-        avail = rng.choices(["easy", "moderate", "hard"], weights=[3, 4, 3])[0]
-        risk = rng.choices(["low", "elevated"], weights=[4, 2])[0]
-        ptype = "garage" if (i == 0 and rng.random() < 0.4) else "street"
-        cleaning = "N/A (garage)" if ptype == "garage" else rng.choice(_CLEANING_TIMES)
-        zones.append({
-            "id": f"pz{i}",
-            "name": f"{_DIR_LABELS[dname]} of destination",
-            "lat": round(lat + dlat, 6),
-            "lon": round(lon + dlon, 6),
-            "type": ptype,
-            "availability": avail,
-            "risk": risk,
-            "cleaning": cleaning,
-            "note": _avail_note(avail, ptype),
-        })
-    return zones
 
 
 # ---------------------------------------------------------------------------

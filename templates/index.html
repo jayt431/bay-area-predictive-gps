@@ -337,7 +337,6 @@
     .pk-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 12px 8px 28px; }
     .pk-row .nm { font-size: 13px; color: var(--ink); }
     .pk-row .ct { font-size: 11px; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
-    .pk-row .warn { color: var(--red); font-size: 11px; font-family: var(--mono); }
 
     /* ---- Trip mode (committed route) ---- */
     .rs-start { margin-top: 14px; width: 100%; padding: 10px; border: none; border-radius: 10px;
@@ -688,7 +687,6 @@
       });
 
       const SEVERITY_COLOR = ["match", ["get", "severity"], "red", "#FF3B30", "yellow", "#FFB020", "#888"];
-      const AVAIL_COLOR = ["match", ["get", "availability"], "easy", "#3DD68C", "moderate", "#FFB020", "hard", "#FF3B30", "#888"];
       const zoomRadius = (s, b) => ["interpolate", ["linear"], ["zoom"], 10, s, 15, b];
 
       map.on("load", () => {
@@ -701,16 +699,15 @@
         map.addSource("alerts", { type: "geojson", data: emptyFC() });
         map.addSource("pstreets",   { type: "geojson", data: emptyFC() });
         map.addSource("pbuildings", { type: "geojson", data: emptyFC() });
-        map.addSource("pcaution",   { type: "geojson", data: emptyFC() });
         map.addSource("pmeters",    { type: "geojson", data: emptyFC() });
 
         // Parking (drawn first, beneath route + pins)
-        // Garage: outlined building footprint, colored by availability
+        // Garage: outlined building footprint (real map POIs)
         map.addLayer({ id: "pbuild-fill", type: "fill", source: "pbuildings",
           paint: { "fill-color": "#4F8EF7", "fill-opacity": 0.30 } });
         map.addLayer({ id: "pbuild-outline", type: "line", source: "pbuildings",
           paint: { "line-color": "#4F8EF7", "line-width": 3.5, "line-opacity": 1 } });
-        // Street parking: colored line offset to the curb, colored by availability
+        // Street parking: a line offset to the curb of each real metered street
         map.addLayer({ id: "pstreet-line", type: "line", source: "pstreets",
           layout: { "line-cap": "round" },
           paint: { "line-color": "#A78BFA", "line-width": 7, "line-offset": 4, "line-opacity": 1 } });
@@ -765,18 +762,6 @@
           paint: { "circle-color": SEVERITY_COLOR, "circle-radius": zoomRadius(5, 9), "circle-stroke-width": 2, "circle-stroke-color": "#0A0A0B" } });
         // Pins carry no always-on text (kept the map uncluttered); the name
         // appears on click (popup) and in the alert panel / trip list.
-
-        // Break-in caution markers (on top): red dot with a "!"
-        map.addLayer({ id: "pcaution-core", type: "circle", source: "pcaution",
-          paint: { "circle-color": "#FF3B30", "circle-radius": zoomRadius(7, 11),
-                   "circle-stroke-width": 2, "circle-stroke-color": "#fff" } });
-        map.addLayer({ id: "pcaution-mark", type: "symbol", source: "pcaution",
-          layout: { "text-field": "!", "text-font": ["DIN Offc Pro Medium", "Arial Unicode MS Regular"], "text-size": 14 },
-          paint: { "text-color": "#fff" } });
-        map.on("click", "pcaution-core", (e) => {
-          new mapboxgl.Popup({ offset: 12 }).setLngLat(e.features[0].geometry.coordinates)
-            .setHTML(`<strong>Break-in risk</strong><br>Elevated vehicle break-ins reported near here.`).addTo(map);
-        });
 
         map.on("click", "alert-core", (e) => {
           const p = e.features[0].properties;
@@ -1236,7 +1221,7 @@
       currentZones = [];
       parkingError = null;
       currentDestPt = [lon, lat];
-      ["pstreets", "pbuildings", "pcaution", "pmeters"].forEach(id => map.getSource(id).setData(emptyFC()));
+      ["pstreets", "pbuildings", "pmeters"].forEach(id => map.getSource(id).setData(emptyFC()));
       parkingShown = false;
       document.getElementById("parking-panel").classList.remove("open");
     }
@@ -1253,15 +1238,14 @@
       if (travelMode !== "drive") return;
       parkingError = data.error || null;
       currentZones = (data.streets || []).map(s => ({
-        name: s.street, lat: s.lat, lon: s.lon, availability: s.availability,
-        risk: s.risk, note: s.note, type: "street", count: s.count, meters: s.meters || [],
+        name: s.street, lat: s.lat, lon: s.lon,
+        note: s.note, type: "street", count: s.count, meters: s.meters || [],
       }));
       currentDestPt = [lon, lat];
 
       // Clear the previous destination's curb lines / garages / caution
       map.getSource("pstreets").setData(emptyFC());
       map.getSource("pbuildings").setData(emptyFC());
-      map.getSource("pcaution").setData(emptyFC());
       parkingShown = false;
       setParkingBtn();
 
@@ -1297,8 +1281,7 @@
         fitRoute();
         map.getSource("pstreets").setData(emptyFC());
         map.getSource("pbuildings").setData(emptyFC());
-        map.getSource("pcaution").setData(emptyFC());
-        btn.textContent = "Show on map ▸";
+          btn.textContent = "Show on map ▸";
         parkingShown = false;
       }
     }
@@ -1526,7 +1509,7 @@
     }
 
     function drawParkingGeometry() {
-      const streets = [], buildings = [], cautions = [], meterDots = [];
+      const streets = [], buildings = [], meterDots = [];
       const streetZones = currentZones;  // all real metered streets now
 
       streetZones.forEach(z => {
@@ -1534,13 +1517,12 @@
         const p = map.project([z.lon, z.lat]);
         const box = [[p.x - 90, p.y - 90], [p.x + 90, p.y + 90]];
         const road = nearestFeature(box, "road", [z.lon, z.lat], "line");
-        if (road) { road.properties = { availability: z.availability }; streets.push(road); }
+        if (road) { road.properties = {}; streets.push(road); }
         // real meter locations as dots
         (z.meters || []).forEach(m => meterDots.push({
           type: "Feature", geometry: { type: "Point", coordinates: m },
-          properties: { availability: z.availability },
+          properties: {},
         }));
-        if (z.risk === "elevated") cautions.push({ type: "Feature", geometry: pt(z.lon, z.lat), properties: {} });
       });
 
       // Garages: real parking POIs from the map, building outlined
@@ -1550,10 +1532,9 @@
       map.getSource("pstreets").setData({ type: "FeatureCollection", features: streets });
       map.getSource("pmeters").setData({ type: "FeatureCollection", features: meterDots });
       map.getSource("pbuildings").setData({ type: "FeatureCollection", features: buildings });
-      map.getSource("pcaution").setData({ type: "FeatureCollection", features: cautions });
 
       renderParkingPanel([...streetZones, ...garages.map(g => ({
-        name: g.name, type: "garage", note: g.note, risk: "low",
+        name: g.name, type: "garage", note: g.note,
       }))]);
     }
 
@@ -1692,7 +1673,7 @@
         html += `<div class="pk-sec"><span class="pk-dot metered"></span><span class="mono-label">Metered streets</span></div>`;
         html += streets.map(z => `
           <div class="pk-row">
-            <span class="nm">${z.name}${z.risk === "elevated" ? ' <span class="warn">⚠</span>' : ''}</span>
+            <span class="nm">${z.name}</span>
             <span class="ct">${z.count || "—"} spaces</span>
           </div>`).join("");
       }

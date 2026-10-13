@@ -69,8 +69,8 @@ Being able to say this precisely is worth more than claiming everything is live.
 | Parking garages | **Real** | Read from Mapbox map tiles in the browser |
 | Blocked streets / civic events | **Real** | San Francisco 311 |
 | Highway incidents & construction | **Real** | 511 SF Bay (Open511), live in production |
-| Parking availability | **Invented** | Predicted, not measured — no live curb feed exists |
-| Break-in risk | **Invented** | Placeholder; real path is SFPD incident data |
+| Parking availability | **Removed** | No live curb feed exists; a guess shown as data was worse than nothing |
+| Break-in risk | **Removed** | Was invented and shown as a warning; real path is SFPD incident data |
 | Events (concerts, games) | **Invented** | Real path is Ticketmaster |
 | Transit directions | **Real** | Our own planner over every Bay Area agency's schedules (511) — up to two transfers, scheduled times |
 | Traffic baseline | **Invented** | Real path is Google Maps Routes API |
@@ -498,8 +498,8 @@ why.
   imprecise, and auto-disables after 60 days without repository activity
 - Parking and civic events are San Francisco only; every Peninsula and East Bay
   destination comes back empty
-- Events, traffic baseline, parking availability, and break-in risk are still
-  invented
+- Events and the traffic baseline are still invented (parking availability and
+  break-in risk were removed rather than kept as fake data)
 - Supabase's free tier pauses a project after 7 days of low activity
 - Imported calendar events only refresh when you connect or press "Sync now";
   nothing re-syncs them overnight
@@ -553,9 +553,10 @@ it knows you are taking, and warns you the evening before.
 
 **"How much of the data is real?"**
 Seven sources are live: routing, weather, news, metered parking, garages, 311
-civic events, and 511 highway incidents. Four are still invented: events, traffic
-baseline, parking availability, and break-in risk. Each has a documented path to
-a real source.
+civic events, and 511 highway incidents. Two are still invented: events and the
+traffic baseline. Parking availability and break-in risk used to be invented
+too; they were removed rather than shown, because a made-up safety warning on a
+map reads as fact. Each has a documented path to a real source.
 
 **"Why isn't the AI part turned on?"**
 It is built and the switch is a single environment variable. The API is

@@ -92,7 +92,6 @@ Endpoints:
 | `GET /` | The map GPS UI |
 | `GET /api/config` | Home base (`mock_data.HOME`) |
 | `GET /api/disruptions` | Bay Area disruption pool. Live 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else mocked |
-| `GET /api/parking?lat&lon` | Mocked parking zones (legacy; UI now uses meters) |
 | `GET /api/meters?lat&lon` | **Real** SF metered streets (DataSF), grouped by street |
 | `GET /api/transit?dest_lat&dest_lon` | Transit options from home, step by step, up to two transfers, every Bay Area agency (own planner over 511 GTFS), with live delays and service alerts laid over (`realtime.annotate`). `{routes, error?}` |
 | `GET /api/schedule` | Upcoming trips, calendar status, alert email |
@@ -480,17 +479,20 @@ directly in code.
 - **Disruptions**: pool in `mock_data` (`GET /api/disruptions`); frontend keeps
   those within 0.5km (red) / 2km (yellow) of the route line (Turf). Native GL
   circle/symbol layers, not HTML markers (fixes zoom jank). Bell + alert panel.
-- **Parking** (`GET /api/parking`, auto-shows on route): "Show on map" zooms in
-  and draws curbside colored lines for street parking (mocked zones snapped to
-  the nearest real road) and outlines for **real garages** — pulled from the
-  map's own tile data via `querySourceFeatures` on `poi_label` (parking is
-  tagged class `motorist` + maki `parking`), building footprint outlined.
-  Availability green/yellow/red; a "!" marker flags elevated break-in risk.
+- **Parking** (`GET /api/meters`, auto-shows on a driving route): "Show on
+  map" zooms in and draws a curb line for each real metered street (snapped to
+  the nearest road) and outlines for **real garages** — pulled from the map's
+  own tile data via `querySourceFeatures` on `poi_label` (parking is tagged
+  class `motorist` + maki `parking`), building footprint outlined.
 
-Parking status: **garages real** (map POIs), **metered streets real** (DataSF,
-violet dots + panel), break-in caution still mocked. Meter dots auto-render on
-routing so parking is visible while driving; curb lines + garage outlines draw
-on arrival.
+Parking status: **everything shown is real** — metered streets (DataSF, violet
+dots + panel) and garages (map POIs). There is deliberately **no availability
+or break-in risk**: both were invented (derived from the street name's
+letters) yet displayed as data, including a map marker claiming "elevated
+vehicle break-ins reported near here", so they were removed along with the
+mocked `/api/parking`. Real SFPD incident data is the way to bring break-in
+risk back. Meter dots auto-render on routing; curb lines + garage outlines
+draw on arrival.
 
 - **Committed trip / navigation.** "▶ Start trip" enters a nav view over the
   route. Two modes share one camera: **step-through** (Prev/Next or click a step
