@@ -71,7 +71,7 @@ Being able to say this precisely is worth more than claiming everything is live.
 | Highway incidents & construction | **Real** | 511 SF Bay (Open511), live in production |
 | Parking availability | **Removed** | No live curb feed exists; a guess shown as data was worse than nothing |
 | Break-in risk | **Removed** | Was invented and shown as a warning; real path is SFPD incident data |
-| Events (concerts, games) | **Invented** | Real path is Ticketmaster |
+| Events (concerts, games) | **Real** | Ticketmaster (concerts, Warriors, 49ers…) and MLB (Giants), big venues only |
 | Transit directions | **Real** | Our own planner over every Bay Area agency's schedules (511) — up to two transfers, scheduled times |
 | Traffic | **Real** | Mapbox live and predicted traffic, compared with what's usual for that hour |
 | The AI trip brief | **Off by choice** | Needs a paid Anthropic API key; see §7 |
@@ -263,6 +263,29 @@ first "if I left at 8:30, how long?", then "if I left exactly that long before
 9:00, how long?" — which lands on the traffic you'll really meet, and gives the
 email a real **"Leave by 8:41 AM"**. Driving now has the same leave-by answer
 transit got earlier.
+
+### Real events — the point of the whole app
+The pitch is "a Warriors game will jam your route tonight, and you'll know
+before you leave." Checking the live site showed it never said anything like
+that: the events in the code were sample data, and they only appeared when
+the live traffic feed was *off*. Now events come from **Ticketmaster**
+(concerts, Warriors, 49ers, Sharks, big shows) and **MLB's schedule** (Giants
+home games, which Ticketmaster doesn't sell).
+
+Two judgment calls make it useful rather than noisy:
+
+- **Only big venues.** Ticketmaster lists every bar show in the region. A
+  300-person gig doesn't move traffic; 18,000 people leaving Chase Center
+  does. A short list of venues, each with its typical crowd, decides what
+  counts — and bigger crowds count from further away.
+- **Only at the right time.** An event clogs the roads around it for about two
+  hours before it starts and an hour after it ends. A noon drive past Oracle
+  Park on a night-game day is fine; a 6:30 drive isn't. The app only warns
+  when your trip overlaps that window — and since the map now plans for any
+  time, "arrive at Mission Bay by 7 tomorrow" warns about tomorrow's game.
+
+For transit the warning changes: a game doesn't block BART's tracks, but it
+fills its trains, so it says "expect crowded trains and buses".
 
 ### Where you start from
 Every route used to start at one hardcoded spot in SoMa. Now a **From** row
@@ -544,8 +567,7 @@ why.
   imprecise, and auto-disables after 60 days without repository activity
 - Parking and civic events are San Francisco only; every Peninsula and East Bay
   destination comes back empty
-- Events are still invented (parking availability and break-in risk were
-  removed rather than kept as fake data)
+- Events need a Ticketmaster key to cover more than Giants games
 - Supabase's free tier pauses a project after 7 days of low activity
 - Imported calendar events only refresh when you connect or press "Sync now";
   nothing re-syncs them overnight
@@ -599,8 +621,8 @@ it knows you are taking, and warns you the evening before.
 
 **"How much of the data is real?"**
 Seven sources are live: routing, weather, news, metered parking, garages, 311
-civic events, 511 highway incidents, live transit, and traffic. One is still
-invented: events. Parking availability and break-in risk used to be invented
+civic events, 511 highway incidents, live transit, traffic, and big events.
+Nothing shown is invented any more. Parking availability and break-in risk used to be invented
 too; they were removed rather than shown, because a made-up safety warning on a
 map reads as fact. Each has a documented path to a real source.
 

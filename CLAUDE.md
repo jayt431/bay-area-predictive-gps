@@ -64,6 +64,9 @@ Env vars:
 - `NEWSAPI_KEY` — live Bay Area news (free developer tier)
 - `TRAFFIC_511_TOKEN` — live 511 SF Bay traffic events; without it the
   disruption pool falls back to the mock list in `mock_data._DISRUPTIONS`
+- `TICKETMASTER_API_KEY` — big events (concerts, Warriors, 49ers, Sharks) from
+  the Ticketmaster Discovery API (free). Without it, only Giants home games
+  (MLB's public schedule, no key) count; `/api/health` → `events.errors` says so
 - `DATABASE_URL` — Postgres for the scheduler. Absent, it uses a local SQLite
   file (`SCHEDULE_DB_PATH`, default `schedule.db`), so the scheduler runs
   locally with no signup
@@ -93,6 +96,7 @@ Endpoints:
 |-------|---------|
 | `GET /` | The map GPS UI |
 | `GET /api/config` | The public demo home (`mock_data.HOME`) — never your real one |
+| `GET /api/events?from&to` | Big events whose busy window overlaps the window (default next 3 h), each with a `reason` |
 | `GET /api/places` | Your home and saved places (gated) |
 | `PUT /api/places` | Replace home and saved places; invalid entries dropped (gated) |
 | `GET /api/disruptions` | Bay Area disruption pool. Live 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else mocked |
@@ -153,6 +157,7 @@ domain migration, which left parking looking like a dead button for weeks.
 | `CRON_SECRET` | no | yes | **also** a GitHub Actions repo secret, must match |
 | `APP_URL` | no | no | GitHub Actions repo secret only |
 | `RESEND_API_KEY`, `ALERT_FROM_EMAIL` | no | **not yet set** — `/api/health` reports `email_configured: false` | the Resend account; with the default `onboarding@resend.dev` sender it only delivers to the account owner's address |
+| `TICKETMASTER_API_KEY` | yes, once created | yes, once created | developer.ticketmaster.com app; terms forbid deriving revenue from the API |
 | `ANTHROPIC_API_KEY` | deliberately unset | deliberately unset | deferred on cost; the rule-based brief is the intended behaviour |
 
 Two deliberate asymmetries, both easy to mistake for mistakes:
@@ -514,6 +519,23 @@ directly in code.
     risk ("take the next option, or leave earlier") and mentions 5+ minute
     delays and alerts; the model prompt gets the same lines.
   - Alert links from 511 are rendered only if they are `http(s)`.
+- **Events** (`events.py`, `/api/events`): Ticketmaster Discovery + MLB's
+  Giants schedule, next 14 days, cached an hour. **Only big venues count**
+  (`VENUES`: Chase Center, Oracle Park, Levi's, SAP Center, Shoreline,
+  Bill Graham…, each with a typical crowd) — Ticketmaster lists every bar
+  gig. Each event has a busy window: 2 h before start (arrivals) to 1 h after
+  an assumed 3 h end (departures); only trips overlapping it are warned.
+  Major (15,000+) events match from 1 km (red) / 3 km (yellow), others at the
+  usual 0.5 / 2 km. On the map they join the on-route pins for the trip's
+  actual leave/arrive time; the alert job does the same in
+  `alerts.events_on_route()`. For transit the whole route counts, rail
+  included, and the reason says "expect crowded trains and buses". The
+  Nearby feed shows events in the next 24 h within 3 km. Before this, the
+  only events were mock data that the live site never showed (511 replaces
+  the mock pool). Ticketmaster's terms allow non-commercial use and reasonable
+  caching but forbid deriving revenue from the API; MLB's data is for
+  personal, non-commercial use — both need revisiting for a paid product.
+  Event and disruption names are escaped wherever they reach `innerHTML`.
 - **Disruptions**: pool in `mock_data` (`GET /api/disruptions`); frontend keeps
   those within 0.5km (red) / 2km (yellow) of the route line (Turf). Native GL
   circle/symbol layers, not HTML markers (fixes zoom jank). Bell + alert panel.

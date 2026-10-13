@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 
 import requests
 
+import events
 import mock_data
 import places
 import transit
@@ -170,6 +171,37 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
     }
 
 
+# A big crowd reaches further than a crash: a sold-out arena backs up streets
+# a kilometre away. Major events (15,000+) get wider thresholds.
+EVENT_RED_KM = {True: 1.0, False: NEAR_RED_KM}
+EVENT_YELLOW_KM = {True: 3.0, False: NEAR_YELLOW_KM}
+
+
+def events_on_route(trip: dict, drawn: dict, mode: str) -> list[dict]:
+    """Big events near the route whose busy window overlaps the trip.
+
+    For transit the whole route counts, rail included: a game doesn't block
+    BART's tracks, but it fills its trains. The reason says which it is."""
+    arrival = trip.get("next_at") or trip.get("arrive_at")
+    try:
+        end = datetime.fromisoformat(arrival)
+    except (TypeError, ValueError):
+        return []
+    start = end - timedelta(minutes=drawn.get("eta_min") or 0)
+    lines = [drawn["coords"]] if mode == "transit" else (drawn.get("street_lines") or [drawn["coords"]])
+    found = []
+    for e in events.during(start, end):
+        km = min(point_to_line_km((e["lon"], e["lat"]), line) for line in lines)
+        severity = ("red" if km <= EVENT_RED_KM[e["major"]]
+                    else "yellow" if km <= EVENT_YELLOW_KM[e["major"]] else None)
+        if not severity:
+            continue
+        effect = "expect crowded trains and buses" if mode == "transit" else "expect heavy traffic"
+        found.append({"name": e["name"], "severity": severity,
+                      "reason": f"{events.describe(e)}; {effect} ({km:.1f} km from route)"})
+    return found
+
+
 def build_context(trip: dict) -> dict | None:
     """Assemble the same trip context the browser POSTs to /api/brief."""
     # Your real home if you've set one (places.py), else the demo start.
@@ -192,6 +224,7 @@ def build_context(trip: dict) -> dict | None:
             "severity": severity,
             "reason": f"{disruption.get('note', '')} ({disruption.get('time', '')} · {km:.1f} km from route)",
         })
+    on_route += events_on_route(trip, drawn, mode)
 
     # Parking only matters to a driver, so the lookup is skipped otherwise.
     parking = (mock_data.get_metered_streets(trip["dest_lat"], trip["dest_lon"])

@@ -819,7 +819,7 @@
         map.on("click", "alert-core", (e) => {
           const p = e.features[0].properties;
           new mapboxgl.Popup({ offset: 12 }).setLngLat(e.features[0].geometry.coordinates)
-            .setHTML(`<strong>${p.name}</strong><br>${p.reason}`).addTo(map);
+            .setHTML(`<strong>${escapeHtml(p.name)}</strong><br>${escapeHtml(p.reason)}`).addTo(map);
         });
         map.on("mouseenter", "alert-core", () => map.getCanvas().style.cursor = "pointer");
         map.on("mouseleave", "alert-core", () => map.getCanvas().style.cursor = "");
@@ -1397,6 +1397,20 @@
       // Real civic/mobility events (SF 311) that fall near this route
       let civicOnRoute = await civicNearRoute(lon, lat, lines);
       onRoute.push(...civicOnRoute);
+      // Big events (games, concerts) whose busy window overlaps this trip. A
+      // big crowd reaches further than a crash, so major ones count from
+      // further away; for transit the whole route counts — a game doesn't
+      // block BART's tracks, but it fills its trains.
+      const leave = route.leaveAt || new Date();
+      const arrive = route.arriveAt || new Date(leave.getTime() + route.duration * 1000);
+      const eventLines = route.transit ? [turf.lineString(route.geometry.coordinates)] : lines;
+      (await fetchEvents(leave, arrive)).forEach(e => {
+        const km = kmToRoute(e.lon, e.lat, eventLines);
+        const severity = km <= (e.major ? 1.0 : NEAR_RED) ? "red" : km <= (e.major ? 3.0 : NEAR_YELLOW) ? "yellow" : null;
+        if (!severity) return;
+        onRoute.push({ name: `🎫 ${e.name}`, lat: e.lat, lon: e.lon, severity, km, type: "event",
+          reason: `${e.reason}; ${route.transit ? "expect crowded trains and buses" : "expect heavy traffic"} (${km.toFixed(1)} km from route)` });
+      });
       // Prioritize what matters: reds first, then closest. Cap so the map and
       // alerts stay digestible instead of flooding with every minor report.
       const sevRank = { red: 0, yellow: 1 };
@@ -1739,7 +1753,7 @@
         html += `<span class="mono-label trip-sec-title">Heads up on the way</span>`;
         html += tripDisruptions.map(d => `
           <div class="alert-item"><div class="alert-dot ${d.severity}"></div>
-          <div><div class="alert-name">${d.name}</div><div class="alert-reason">${d.reason}</div></div></div>`).join("");
+          <div><div class="alert-name">${escapeHtml(d.name)}</div><div class="alert-reason">${escapeHtml(d.reason)}</div></div></div>`).join("");
       }
       html += `<span class="mono-label trip-sec-title">Directions</span>`;
       html += tripSteps.map((s, i) => `
@@ -2010,7 +2024,7 @@
       const row = d => `
         <div class="alert-item">
           <div class="alert-dot ${d.severity}"></div>
-          <div><div class="alert-name">${d.name}</div><div class="alert-reason">${d.reason}</div></div>
+          <div><div class="alert-name">${escapeHtml(d.name)}</div><div class="alert-reason">${escapeHtml(d.reason)}</div></div>
         </div>`;
 
       let html = urgent.length
@@ -2492,6 +2506,13 @@
     }
 
     // View 1: civic events that fall near the route line -> disruption shape
+    async function fetchEvents(from, to) {
+      try {
+        const d = await (await fetch(`/api/events?from=${localIso(from)}&to=${localIso(to)}`)).json();
+        return d.events || [];
+      } catch { return []; }
+    }
+
     async function civicNearRoute(destLon, destLat, lines) {
       const events = await fetchCivic(destLon, destLat, 1800);
       const out = [];
@@ -2521,7 +2542,7 @@
       document.getElementById("feed-place").textContent = `Near ${label}`;
       document.getElementById("feed-list").innerHTML = '<div class="alert-empty">Loading…</div>';
 
-      // Major events (mock pool) within ~3km of the focus point
+      // Live incidents (511) within ~3 km of the focus point
       const here = turf.point(focus);
       const items = [];
       disruptions.forEach(d => {
@@ -2533,6 +2554,13 @@
           severity: ["incident", "construction", "weather"].includes(d.type) ? "red" : "yellow",
           km,
         });
+      });
+      // Big events in the next 24 hours within ~3 km
+      (await fetchEvents(new Date(), new Date(Date.now() + 24 * 3600 * 1000))).forEach(e => {
+        const km = turf.distance(here, turf.point([e.lon, e.lat]), { units: "kilometers" });
+        if (km > 3) return;
+        items.push({ icon: "🎫", title: e.name, meta: `${e.start_text} · ${km.toFixed(1)} km away`,
+          sub: `${e.venue} · about ${e.crowd.toLocaleString()} people`, severity: e.major ? "red" : "yellow", km });
       });
       // Real, active road/sidewalk closures (SF 311) near the focus — nearest few
       const closures = await fetchCivic(focus[0], focus[1], 1500);
@@ -2561,9 +2589,9 @@
         <div class="feed-item">
           <div class="feed-icon">${e.icon}</div>
           <div>
-            <div class="feed-name">${e.title}<span class="sev ${e.severity}"></span></div>
-            <div class="feed-meta">${e.meta}</div>
-            ${e.sub ? `<div class="feed-addr">${e.sub}</div>` : ""}
+            <div class="feed-name">${escapeHtml(e.title)}<span class="sev ${e.severity}"></span></div>
+            <div class="feed-meta">${escapeHtml(e.meta)}</div>
+            ${e.sub ? `<div class="feed-addr">${escapeHtml(e.sub)}</div>` : ""}
           </div>
         </div>`;
 

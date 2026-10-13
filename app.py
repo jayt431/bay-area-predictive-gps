@@ -29,6 +29,7 @@ import alerts
 import calendar_sync
 import realtime
 import transit
+import events
 import mock_data
 import places
 import scheduler
@@ -81,6 +82,8 @@ def health():
         # 511 requests in the last hour (the token allows 60), and how many
         # of them were live transit rather than traffic.
         "requests_511": realtime.usage(),
+        # Big events loaded for the next two weeks, and any source that failed.
+        "events": events.status(),
         "transit_data_until": transit.data_until(),
         # "sqlite" in production means scheduled trips vanish on restart.
         "schedule_storage": "postgres" if store.using_postgres() else "sqlite",
@@ -605,6 +608,20 @@ def schedule_settings():
         email = (body.get("alert_email") or "").strip()
         store.set_setting(scheduler.ALERT_EMAIL_KEY, email or None)
     return jsonify({"alert_email": store.get_setting(scheduler.ALERT_EMAIL_KEY)})
+
+
+@app.route("/api/events")
+def get_events():
+    """Big events whose busy window overlaps `from`..`to` (Pacific ISO times;
+    default: the next three hours), each with a plain-English `reason`."""
+    now = datetime.now()
+    try:
+        start = datetime.fromisoformat(request.args["from"]) if request.args.get("from") else now
+        end = datetime.fromisoformat(request.args["to"]) if request.args.get("to") else start + timedelta(hours=3)
+    except ValueError:
+        return jsonify({"events": [], "error": "from/to must look like 2026-10-20T18:30"}), 400
+    found = [{**e, "reason": events.describe(e)} for e in events.during(start, end)]
+    return jsonify({"events": found, **events.status()})
 
 
 @app.route("/api/places")
