@@ -1,0 +1,32 @@
+# Run the test suite on every push and pull request.
+#
+# The tests need no secrets and no network: every key is stripped in
+# tests/conftest.py, the planner runs on the committed transit_data/, and
+# outside services are replaced by fixtures. So a red run here always means
+# the code changed behaviour, never that 511 or Mapbox had a bad minute.
+#
+# The schedule bot's nightly commits do NOT trigger this: GitHub doesn't start
+# workflows from pushes made with a workflow's own token. That job runs
+# `gtfs_build.py --check` on new timetables instead.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements-dev.txt
+
+      - name: Test
+        run: python -m pytest -q

@@ -264,6 +264,19 @@ first "if I left at 8:30, how long?", then "if I left exactly that long before
 email a real **"Leave by 8:41 AM"**. Driving now has the same leave-by answer
 transit got earlier.
 
+### A test suite that runs on every push
+Almost every bug this project hit was found by a check run once by hand and
+then thrown away — so nothing stopped the same bug coming back. Those checks
+are now a permanent suite of 45 tests that runs in about three seconds, needs
+no keys and no internet, and runs automatically on GitHub on every push.
+
+Most tests are named after the bug they guard: "the summary comes from the
+most delayed ride" (it once said *running to schedule* while BART was 11
+minutes late), "errors never contain the token", "same-line continuation is
+one ride" (the 25 to Treasure Island). To check the tests actually work, two
+of those old bugs were deliberately put back — the suite failed on both, then
+passed again once they were removed. A test that can't fail is decoration.
+
 ### Real events — the point of the whole app
 The pitch is "a Warriors game will jam your route tonight, and you'll know
 before you leave." Checking the live site showed it never said anything like

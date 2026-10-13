@@ -37,6 +37,11 @@ set -a && . ./.env && set +a && ./venv/bin/python gtfs_build.py   # only what ch
 set -a && . ./.env && set +a && ./venv/bin/python gtfs_build.py --all
 ./venv/bin/python gtfs_build.py --check
 
+# Tests: no network, no secrets, ~3 s. Also run by .github/workflows/tests.yml
+# on every push.
+./venv/bin/pip install -r requirements-dev.txt
+./venv/bin/python -m pytest -q
+
 # Production (Render) runs: gunicorn app:app   (see Procfile)
 ```
 
@@ -77,6 +82,14 @@ Env vars:
 - `SCHEDULE_PASSCODE` — gates the scheduler endpoints. **Unset means open**,
   which keeps local development frictionless and makes setting it in production
   mandatory
+
+**Tests** (`tests/`, pytest): `conftest.py` strips every key and points the
+schedule DB at a temp file *before* anything is imported (store.py reads its
+path at import). Planner tests run on the committed `transit_data/` for a
+Wednesday a few days out (`next_weekday`), so they don't depend on today;
+live, events and 511 are fixtures. Most tests are named after the bug they
+guard — they were checked by putting two old bugs back and watching them
+fail. Add one with each fix.
 
 Every source degrades gracefully; a missing key downgrades one feature, never
 breaks the app. **After each meaningful change: commit + push** (backs up to
