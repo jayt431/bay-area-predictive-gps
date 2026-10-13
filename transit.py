@@ -287,13 +287,14 @@ def _walk(frm: tuple[float, float], to: tuple[float, float], estimate_s: float) 
         resp = requests.get(_WALK_URL.format(frm[1], frm[0], to[1], to[0]),
                             # A "walk" must never quietly include a ferry ride.
                             params={"access_token": token, "geometries": "geojson",
-                                    "overview": "full", "exclude": "ferry"},
+                                    "overview": "full", "exclude": "ferry", "steps": "true"},
                             timeout=10)
         resp.raise_for_status()
         best = (resp.json().get("routes") or [None])[0]
     except Exception:
         best = None
-    if not best:
+    # exclude=ferry isn't airtight; a "walk" with a ferry step in it isn't one.
+    if not best or any(s.get("mode") == "ferry" for l in best.get("legs") or [] for s in l.get("steps") or []):
         return straight
     leg = {"duration_s": round(best["duration"]), "distance_m": round(best["distance"]),
            "coords": best["geometry"]["coordinates"]}
@@ -670,7 +671,8 @@ def _build(data: dict, day: date, journey: dict, origin, destination) -> dict:
 
 
 def plan(origin: tuple[float, float], destination: tuple[float, float],
-         arrive_by: str | None = None, alternatives: bool = True) -> dict:
+         arrive_by: str | None = None, alternatives: bool = True,
+         depart_at: str | None = None) -> dict:
     """Transit options between two (lat, lon) points: direct rides and trips
     with up to two transfers.
 
@@ -688,6 +690,11 @@ def plan(origin: tuple[float, float], destination: tuple[float, float],
             when = datetime.fromisoformat(arrive_by)
         except ValueError:
             return {"routes": [], "error": "arrive_by must be an ISO time"}
+    elif depart_at:
+        try:
+            when = datetime.fromisoformat(depart_at)
+        except ValueError:
+            return {"routes": [], "error": "depart_at must be an ISO time"}
     else:
         when = datetime.now(_PACIFIC).replace(tzinfo=None)
     day, target = when.date(), when.hour * 3600 + when.minute * 60 + when.second

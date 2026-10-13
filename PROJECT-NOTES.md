@@ -264,6 +264,22 @@ first "if I left at 8:30, how long?", then "if I left exactly that long before
 email a real **"Leave by 8:41 AM"**. Driving now has the same leave-by answer
 transit got earlier.
 
+### Planning for later: Now, Leave at, Arrive by
+The map used to answer only "if I left right now". The route card now has
+**Now / Leave at / Arrive by** with a time picker, and every mode respects it:
+driving asks for the traffic predicted at that hour, transit plans against
+that day's actual timetable, and walking and biking simply count forward or
+back. "Arrive at Jack London Square by 9:00 tomorrow" gives *leave 8:41 by car,
+8:17 by transit*. The brief also takes the weather for when you'll actually be
+travelling, not for now.
+
+Testing it turned up the ferry problem again: Mapbox walked SoMa to Oakland
+across the Bay on the Alameda Seaplane ferry *despite* being told to avoid
+ferries — its filter catches some ferry routes and not others. So the app no
+longer trusts the request alone: it checks every route it gets back, and one
+with a ferry in it is refused. The Walk tab says "Needs ferry", which is the
+truth, and Transit plans the ferry properly.
+
 ### Live delays
 On top of the timetable, every ride now shows how it's actually running:
 "On time", "11 min late · departs 10:46 PM", or "Cancelled", plus any service

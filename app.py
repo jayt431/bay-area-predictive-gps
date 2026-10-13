@@ -93,13 +93,26 @@ def health():
 @app.route("/api/transit")
 def transit_directions():
     """Transit options from home to a destination, step by step, with up to
-    two transfers, planned over every Bay Area agency's 511 schedules."""
+    two transfers, planned over every Bay Area agency's 511 schedules.
+
+    Optional `leave_at` or `arrive_by` (Pacific, "2026-10-20T08:30"); without
+    either the trip leaves now. Live data is added only for trips leaving
+    soon — realtime.annotate skips anything further out by itself.
+    """
     try:
         lat, lon = float(request.args["dest_lat"]), float(request.args["dest_lon"])
     except (KeyError, TypeError, ValueError):
         return jsonify({"routes": [], "error": "dest_lat and dest_lon are required"}), 400
+    leave_at, arrive_by = request.args.get("leave_at"), request.args.get("arrive_by")
+    for value in (leave_at, arrive_by):
+        if value:
+            try:
+                datetime.fromisoformat(value)
+            except ValueError:
+                return jsonify({"routes": [], "error": "times must look like 2026-10-20T08:30"}), 400
     home = mock_data.HOME
-    plan = transit.plan((home["lat"], home["lon"]), (lat, lon))
+    plan = transit.plan((home["lat"], home["lon"]), (lat, lon),
+                        arrive_by=arrive_by or None, depart_at=None if arrive_by else leave_at)
     # Live delays and alerts on top. A deep copy, because the planner caches
     # its result and live data must never be cached as if it were schedule.
     return jsonify(realtime.annotate(copy.deepcopy(plan)))
@@ -253,6 +266,15 @@ def _live_conditions(ctx: dict) -> tuple[dict, dict]:
     """
     now = _local_now()
     date = now.strftime("%Y-%m-%d")
+    # A trip planned for later ("leave at 5:30", "arrive by 9") gets the
+    # forecast for when it actually runs, not for right now.
+    if ctx.get("depart_at"):
+        try:
+            planned = datetime.fromisoformat(ctx["depart_at"])
+            if planned > now:
+                now = planned
+        except ValueError:
+            pass
     try:
         eta_min = int(float(ctx.get("eta_min") or 0))
     except (TypeError, ValueError):

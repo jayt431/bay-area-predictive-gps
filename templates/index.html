@@ -139,6 +139,16 @@
     .rs-stat .num small { font-size: 12px; color: var(--muted); font-weight: 400; }
     .rs-stat .cap { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
     .rs-stat .num.warn { color: var(--yellow); }
+    .time-row { display: flex; align-items: center; gap: 6px; margin: -4px 0 12px; flex-wrap: wrap; }
+    .time-seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .time-seg button { background: none; border: none; color: var(--muted); font-family: var(--sans);
+      font-size: 11px; padding: 5px 9px; cursor: pointer; }
+    .time-seg button + button { border-left: 1px solid var(--line); }
+    .time-seg button.on { color: var(--accent); background: rgba(0,229,199,0.08); }
+    .time-input { background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 7px;
+      color: var(--ink); font-family: var(--sans); font-size: 11px; padding: 4px 6px; color-scheme: dark; }
+    .rs-when { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .rs-when b { color: var(--ink); }
     .rs-traffic { font-size: 11px; margin-top: 8px; color: var(--muted); }
     .rs-traffic.slow { color: var(--yellow); }
     .rs-traffic.bad { color: var(--red); }
@@ -410,11 +420,20 @@
     </div>
     <div class="rs-dest" id="rs-dest">—</div>
     <div class="mode-tabs" id="mode-tabs"></div>
+    <div class="time-row">
+      <div class="time-seg" id="time-seg">
+        <button data-t="now" class="on" onclick="setTimeMode('now')">Now</button>
+        <button data-t="leave" onclick="setTimeMode('leave')">Leave at</button>
+        <button data-t="arrive" onclick="setTimeMode('arrive')">Arrive by</button>
+      </div>
+      <input type="datetime-local" id="time-input" class="time-input" hidden onchange="onTimeInput()" />
+    </div>
     <div class="rs-stats">
       <div class="rs-stat"><div class="num" id="rs-eta">—</div><div class="cap">ETA</div></div>
       <div class="rs-stat"><div class="num" id="rs-dist">—</div><div class="cap">Distance</div></div>
       <div class="rs-stat"><div class="num" id="rs-alerts">—</div><div class="cap">On route</div></div>
     </div>
+    <div class="rs-when" id="rs-when"></div>
     <div class="rs-traffic" id="rs-traffic" hidden></div>
     <div id="transit-plan" hidden></div>
     <div id="brief">
@@ -899,12 +918,68 @@
       document.body.classList.remove("trip-mode");  // picking a new place exits any active trip
 
       map.getSource("dest").setData(pt(lon, lat));
+      await loadRoutes();
+    }
 
-      // One route per travel mode, fetched together so each tab can show its
-      // time and switching between them is instant.
-      const picked = currentDest;
+    // ---- When: now, leave at a time, or arrive by a time ----
+    // Every mode honours it: driving asks Mapbox for predicted traffic at the
+    // departure, transit plans against that day's timetable, and walking and
+    // biking (no traffic) just add or subtract their duration.
+    let timeMode = "now";      // "now" | "leave" | "arrive"
+    const needsFerry = new Set();  // profiles whose only route used a ferry
+    let timeValue = "";        // "YYYY-MM-DDTHH:MM", local time
+
+    function localIso(d) {
+      const p = n => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    function plannedTime() { return timeMode === "now" || !timeValue ? null : new Date(timeValue); }
+
+    function setTimeMode(mode) {
+      timeMode = mode;
+      document.querySelectorAll("#time-seg button").forEach(b => b.classList.toggle("on", b.dataset.t === mode));
+      const input = document.getElementById("time-input");
+      input.hidden = mode === "now";
+      if (mode !== "now") {
+        const now = new Date();
+        input.min = localIso(now);
+        if (!timeValue || new Date(timeValue) < now) {
+          // A sensible starting point: leave in a few minutes, or arrive in an hour.
+          const start = new Date(now.getTime() + (mode === "leave" ? 15 : 60) * 60000);
+          start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
+          timeValue = localIso(start);
+        }
+        input.value = timeValue;
+      }
+      if (currentDest) loadRoutes();
+    }
+
+    function onTimeInput() {
+      const input = document.getElementById("time-input");
+      if (!input.value) return;
+      // The past isn't plannable: clamp to now.
+      timeValue = new Date(input.value) < new Date() ? localIso(new Date()) : input.value;
+      input.value = timeValue;
+      if (currentDest) loadRoutes();
+    }
+
+    function whenText(d) {
+      const today = new Date();
+      const sameDay = d.toDateString() === today.toDateString();
+      const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      return sameDay ? time : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
+    }
+
+    // One route per travel mode, fetched together so each tab can show its
+    // time and switching between them is instant.
+    async function loadRoutes() {
+      const { lon, lat } = currentDest;
+      const picked = currentDest, pickedTime = `${timeMode}|${timeValue}`;
+      needsFerry.clear();
       const results = await Promise.all(MODES.map(m =>
         m.profile ? fetchRoute(m.profile, lon, lat) : fetchTransit(lon, lat)));
+      if (`${timeMode}|${timeValue}` !== pickedTime) return;   // the time changed meanwhile
       transitChoice = 0;
       if (currentDest !== picked) return;      // a newer pick has taken over
       routeOptions = {};
@@ -925,9 +1000,34 @@
       // which knows their timetables.
       const url = `https://api.mapbox.com/directions/v5/mapbox/${profile}/`
         + `${home.lon},${home.lat};${lon},${lat}?geometries=geojson&overview=full&steps=true&exclude=ferry&access_token=${TOKEN}`;
-      try {
-        const dir = await (await fetch(url)).json();
+      const get = async (departAt) => {
+        // depart_at must be in the future; for anything else, ask about now.
+        const extra = departAt && departAt > new Date(Date.now() + 60000) ? `&depart_at=${localIso(departAt)}` : "";
+        const dir = await (await fetch(url + extra)).json();
         return (dir.routes && dir.routes[0]) || null;
+      };
+      const t = plannedTime();
+      try {
+        let r;
+        if (profile === "driving-traffic" && t && timeMode === "arrive") {
+          // The traffic profile ignores arrive_by, so: guess a departure half an
+          // hour early, then leave exactly that drive's length before arriving.
+          const first = await get(new Date(t - 30 * 60000));
+          r = (first && await get(new Date(t - first.duration * 1000))) || first;
+        } else {
+          r = await get(profile === "driving-traffic" ? t : null);
+        }
+        if (!r) return null;
+        // exclude=ferry isn't airtight: Mapbox still walks you onto the Alameda
+        // Seaplane ferry to reach Oakland. A route with any ferry step isn't a
+        // walk, a ride or a drive — Transit plans ferries against timetables.
+        if ((r.legs || []).some(l => (l.steps || []).some(s => s.mode === "ferry"))) {
+          needsFerry.add(profile);
+          return null;
+        }
+        if (timeMode === "arrive" && t) { r.arriveAt = t; r.leaveAt = new Date(t - r.duration * 1000); }
+        else { r.leaveAt = t || new Date(); r.arriveAt = new Date(r.leaveAt.getTime() + r.duration * 1000); }
+        return r;
       } catch { return null; }
     }
 
@@ -937,7 +1037,9 @@
     async function fetchTransit(lon, lat) {
       transitError = null;
       try {
-        const data = await (await fetch(`/api/transit?dest_lat=${lat}&dest_lon=${lon}`)).json();
+        const t = plannedTime();
+        const when = t ? (timeMode === "arrive" ? `&arrive_by=${localIso(t)}` : `&leave_at=${localIso(t)}`) : "";
+        const data = await (await fetch(`/api/transit?dest_lat=${lat}&dest_lon=${lon}${when}`)).json();
         if (!data.routes || !data.routes.length) { transitError = data.error || "No transit route"; return null; }
         return { options: data.routes, ...transitAsRoute(data.routes[0]) };
       } catch {
@@ -950,6 +1052,8 @@
       return {
         duration: plan.duration_s,
         distance: plan.distance_m,
+        leaveAt: plan.leave_at ? new Date(plan.leave_at) : null,
+        arriveAt: plan.arrive_at ? new Date(plan.arrive_at) : null,
         geometry: { type: "LineString", coordinates: plan.segments.flatMap(s => s.coords) },
         transit: plan,
       };
@@ -1081,7 +1185,9 @@
     function renderModeTabs() {
       document.getElementById("mode-tabs").innerHTML = MODES.map(m => {
         const r = routeOptions[m.id];
-        const time = r ? formatDuration(r.duration) : (m.id === "transit" ? transitShortReason() : "—");
+        const time = r ? formatDuration(r.duration)
+          : m.id === "transit" ? transitShortReason()
+          : needsFerry.has(m.profile) ? "Needs ferry" : "—";
         const why = !r && m.id === "transit" && transitError ? `title="${escapeHtml(transitError)}"` : "";
         return `<button class="mode-tab${m.id === travelMode ? " on" : ""}" ${r ? "" : "disabled"} ${why}
                   onclick="setMode('${m.id}')"><span class="m">${m.label}</span><span class="t">${time}</span></button>`;
@@ -1182,6 +1288,9 @@
         destination: name,
         mode: travelMode,
         traffic_delta_min: trafficDelta(route),
+        depart_at: timeMode !== "now" && route.leaveAt ? localIso(route.leaveAt) : null,
+        leave_by_text: timeMode === "arrive" && travelMode !== "transit" && route.leaveAt
+          ? route.leaveAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null,
         typical_min: route.duration_typical != null ? Math.round(route.duration_typical / 60) : null,
         transit_plan: route.transit
           ? { ...route.transit, segments: route.transit.segments.map(({ coords, ...rest }) => rest) } : null,
@@ -1704,13 +1813,19 @@
       const delta = trafficDelta(route);
       if (delta == null) { el.hidden = true; return; }
       el.hidden = false;
-      if (delta >= 3) { el.className = "rs-traffic " + (delta >= 10 ? "bad" : "slow"); el.textContent = `▲ ${delta} min slower than usual right now`; }
-      else if (delta <= -3) { el.className = "rs-traffic fast"; el.textContent = `▼ ${-delta} min faster than usual right now`; }
+      const at = timeMode === "now" ? "right now" : "at that time";
+      if (delta >= 3) { el.className = "rs-traffic " + (delta >= 10 ? "bad" : "slow"); el.textContent = `▲ ${delta} min slower than usual ${at}`; }
+      else if (delta <= -3) { el.className = "rs-traffic fast"; el.textContent = `▼ ${-delta} min faster than usual ${at}`; }
       else { el.className = "rs-traffic"; el.textContent = "Traffic about usual for this time"; }
     }
 
     function updateSummary(name, route, onRoute) {
       updateTraffic(route);
+      // Leave → arrive. Transit's own plan shows this already.
+      const when = document.getElementById("rs-when");
+      when.innerHTML = route.leaveAt && route.arriveAt && travelMode !== "transit"
+        ? `${timeMode === "now" ? "Leave now" : `Leave <b>${whenText(route.leaveAt)}</b>`} → arrive <b>${whenText(route.arriveAt)}</b>`
+        : "";
       document.getElementById("route-summary").classList.add("open");
       document.getElementById("rs-dest").textContent = name;
       const mins = Math.round(route.duration / 60);

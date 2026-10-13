@@ -126,7 +126,7 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
             arrival = None
 
     def directions(depart_at: datetime | None):
-        params = {"access_token": token, "geometries": "geojson", "overview": "full",
+        params = {"access_token": token, "geometries": "geojson", "overview": "full", "steps": "true",
                   # No ferries: the Transit mode handles them, with their timetables.
                   "exclude": "ferry"}
         if depart_at and depart_at > datetime.now():
@@ -136,9 +136,15 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
                                                        destination[0], destination[1]),
                                 params=params, timeout=20)
             resp.raise_for_status()
-            return (resp.json().get("routes") or [None])[0]
+            best = (resp.json().get("routes") or [None])[0]
         except Exception:
             return None
+        # exclude=ferry isn't airtight (Mapbox still routes walks onto the
+        # Alameda Seaplane ferry), so a route with any ferry step is refused.
+        if best and any(s.get("mode") == "ferry" for leg in best.get("legs") or []
+                        for s in leg.get("steps") or []):
+            return None
+        return best
 
     if arrival:
         best = directions(arrival - timedelta(minutes=30))

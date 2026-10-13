@@ -95,7 +95,7 @@ Endpoints:
 | `GET /api/config` | Home base (`mock_data.HOME`) |
 | `GET /api/disruptions` | Bay Area disruption pool. Live 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else mocked |
 | `GET /api/meters?lat&lon` | **Real** SF metered streets (DataSF), grouped by street |
-| `GET /api/transit?dest_lat&dest_lon` | Transit options from home, step by step, up to two transfers, every Bay Area agency (own planner over 511 GTFS), with live delays and service alerts laid over (`realtime.annotate`). `{routes, error?}` |
+| `GET /api/transit?dest_lat&dest_lon[&leave_at\|&arrive_by]` | Transit options from home, step by step, up to two transfers, every Bay Area agency (own planner over 511 GTFS), with live delays and service alerts laid over (`realtime.annotate`). `{routes, error?}` |
 | `GET /api/schedule` | Upcoming trips, calendar status, alert email |
 | `POST /api/schedule` | Add a manual trip (one-off `arrive_at`, or `days` + `time_of_day`) |
 | `DELETE /api/schedule/<id>` | Remove a trip |
@@ -355,6 +355,21 @@ directly in code.
   chip. **Saved destinations** persist via browser `localStorage` (`bapg_saved`).
 - **Routing**: real route via Mapbox Directions; route summary panel
   shows ETA, distance, and on-route disruption count.
+- **When** (route card: Now / Leave at / Arrive by, `timeMode`/`timeValue`,
+  not persisted): every mode honours it. Driving sends `depart_at` (future
+  only — Mapbox rejects past times) and for arrive-by does the same two-pass
+  estimate as the server; walking and biking add or subtract their duration;
+  transit passes `leave_at`/`arrive_by` to `/api/transit` (live annotation
+  only applies within 90 min, by itself). Each route carries `leaveAt` /
+  `arriveAt`, shown as "Leave Wed 8:41 AM → arrive Wed 9:00 AM". The brief
+  gets `depart_at`, and `_live_conditions` takes the forecast for that time
+  instead of now. Past times clamp to now. The disruption pool is still
+  *current* incidents — there's no forecast of tomorrow's crashes.
+- **No ferries outside Transit, checked twice**: requests send `exclude=ferry`,
+  but Mapbox still walked SoMa → Oakland onto the Alameda Seaplane ferry, so
+  every returned route is also scanned and **refused if any step's `mode` is
+  `ferry`** (page: the tab reads "Needs ferry"; server: `alerts.route` returns
+  None; transit walks fall back to a straight line).
 - **Traffic**: driving uses Mapbox's `driving-traffic` profile — live traffic,
   plus `duration_typical` for the same hour, so the route card says "▲ 7 min
   slower than usual right now" (±3 min is "about usual"). The brief gets
