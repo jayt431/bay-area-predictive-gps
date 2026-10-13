@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 
@@ -28,7 +28,9 @@ _DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/{}/{},{};{},{}"
 # Travel modes, keyed by the name stored on a trip. Three route through a
 # Mapbox Directions profile; transit has none there and goes through our own
 # planner over 511 schedule data (transit.py) instead.
-PROFILES = {"drive": "driving", "walk": "walking", "bike": "cycling"}
+# Driving uses the traffic-aware profile: live traffic now, predicted traffic
+# for a future departure, and a "typical" duration to compare against.
+PROFILES = {"drive": "driving-traffic", "walk": "walking", "bike": "cycling"}
 MODES = (*PROFILES, "transit")
 MODE_NOUN = {"drive": "Drive", "walk": "Walk", "bike": "Bike ride", "transit": "Transit"}
 
@@ -86,8 +88,13 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
           arrive_by: str | None = None) -> dict | None:
     """Route for one travel mode. Coordinates are (lon, lat).
 
-    Transit is planned to arrive by `arrive_by` (a naive Pacific time), which
-    is what turns it into a "leave by" answer; the Mapbox modes ignore it.
+    With `arrive_by` (a naive Pacific time), transit and driving both answer
+    "when do I have to leave?". Transit plans backwards from the arrival.
+    Driving asks for predicted traffic at a departure time: Mapbox's traffic
+    profile accepts `depart_at` but ignores `arrive_by`, so it guesses a
+    departure 30 minutes early, then asks again leaving that many minutes
+    before arrival — which settles on the traffic you'll actually meet.
+    Walking and biking have no traffic and ignore the time.
     """
     if normalize_mode(mode) == "transit":
         planned = transit.plan((origin[1], origin[0]), (destination[1], destination[0]),
@@ -110,22 +117,46 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
     token = token or os.environ.get("MAPBOX_TOKEN", "")
     if not token:
         return None
-    try:
-        resp = requests.get(
-            _DIRECTIONS_URL.format(PROFILES[normalize_mode(mode)],
-                                   origin[0], origin[1], destination[0], destination[1]),
-            # No ferries: the Transit mode handles them, with their timetables.
-            params={"access_token": token, "geometries": "geojson", "overview": "full", "exclude": "ferry"},
-            timeout=20,
-        )
-        resp.raise_for_status()
-        routes = resp.json().get("routes") or []
-    except Exception:
+    mode = normalize_mode(mode)
+    arrival = None
+    if arrive_by and mode == "drive":
+        try:
+            arrival = datetime.fromisoformat(arrive_by)
+        except ValueError:
+            arrival = None
+
+    def directions(depart_at: datetime | None):
+        params = {"access_token": token, "geometries": "geojson", "overview": "full",
+                  # No ferries: the Transit mode handles them, with their timetables.
+                  "exclude": "ferry"}
+        if depart_at and depart_at > datetime.now():
+            params["depart_at"] = depart_at.strftime("%Y-%m-%dT%H:%M")   # local time at origin
+        try:
+            resp = requests.get(_DIRECTIONS_URL.format(PROFILES[mode], origin[0], origin[1],
+                                                       destination[0], destination[1]),
+                                params=params, timeout=20)
+            resp.raise_for_status()
+            return (resp.json().get("routes") or [None])[0]
+        except Exception:
+            return None
+
+    if arrival:
+        best = directions(arrival - timedelta(minutes=30))
+        if best:
+            best = directions(arrival - timedelta(seconds=best["duration"])) or best
+    else:
+        best = directions(None)
+    if not best:
         return None
-    if not routes:
-        return None
-    best = routes[0]
+    typical = best.get("duration_typical")
+    leave = arrival - timedelta(seconds=best["duration"]) if arrival else None
     return {
+        # How this drive compares with usual traffic at that hour, in minutes
+        # (positive = slower than usual). Driving only; None otherwise.
+        "typical_min": round(typical / 60) if typical else None,
+        "traffic_delta_min": round((best["duration"] - typical) / 60) if typical else None,
+        "leave_by": leave.isoformat(timespec="minutes") if leave else None,
+        "leave_by_text": leave.strftime("%I:%M %p").lstrip("0") if leave else None,
         "coords": [(c[0], c[1]) for c in best["geometry"]["coordinates"]],
         "eta_min": round(best["duration"] / 60),
         "distance_mi": round(best["distance"] / 1609.34, 1),
@@ -168,7 +199,23 @@ def build_context(trip: dict) -> dict | None:
         "parking": [{"name": s["street"], "count": s["count"]}
                     for s in (parking.get("streets") or [])[:5]],
         "transit": transit_summary(drawn.get("transit")),
+        "traffic_delta_min": drawn.get("traffic_delta_min"),
+        "typical_min": drawn.get("typical_min"),
+        "leave_by_text": drawn.get("leave_by_text"),
     }
+
+
+def traffic_phrase(ctx: dict) -> str | None:
+    """'7 min slower than usual', 'about usual', or None when unknown. Under
+    three minutes either way is noise, not news."""
+    delta = ctx.get("traffic_delta_min")
+    if delta is None:
+        return None
+    if delta >= 3:
+        return f"{delta} min slower than usual"
+    if delta <= -3:
+        return f"{-delta} min faster than usual"
+    return "about usual for that time"
 
 
 def transit_summary(plan: dict | None) -> dict | None:
@@ -239,6 +286,11 @@ def format_email(trip: dict, alert: dict, context: dict) -> tuple[str, str]:
         "",
         f"Recommendation: {alert.get('recommendation', 'No action needed.')}",
     ]
+    traffic = traffic_phrase(context)
+    if traffic:
+        lines.insert(5, f"Traffic:     {traffic}")
+    if context.get("leave_by_text"):
+        lines.insert(4, f"Leave by:    {context['leave_by_text']}")
     plan = context.get("transit")
     if plan:
         if plan.get("leave_text"):

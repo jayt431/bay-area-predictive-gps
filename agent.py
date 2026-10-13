@@ -169,7 +169,11 @@ def _format_trip_context(ctx: dict) -> str:
     lines = [
         f"Destination: {ctx.get('destination', 'unknown')}",
         f"Travel mode: {_MODE_WORDS.get(ctx.get('mode'), 'driving')}",
-        f"ETA: {ctx.get('eta_min', '?')} min, {ctx.get('distance_mi', '?')} mi from home.",
+        f"ETA: {ctx.get('eta_min', '?')} min, {ctx.get('distance_mi', '?')} mi from home."
+        + (f" Usual for this hour: {ctx['typical_min']} min "
+           f"({ctx['traffic_delta_min']:+d} min)." if ctx.get("typical_min") is not None
+           and ctx.get("traffic_delta_min") is not None else "")
+        + (f" Leave by {ctx['leave_by_text']}." if ctx.get("leave_by_text") else ""),
         "",
         "Predicted disruptions on the route:",
     ]

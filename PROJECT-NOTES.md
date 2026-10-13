@@ -73,7 +73,7 @@ Being able to say this precisely is worth more than claiming everything is live.
 | Break-in risk | **Removed** | Was invented and shown as a warning; real path is SFPD incident data |
 | Events (concerts, games) | **Invented** | Real path is Ticketmaster |
 | Transit directions | **Real** | Our own planner over every Bay Area agency's schedules (511) — up to two transfers, scheduled times |
-| Traffic baseline | **Invented** | Real path is Google Maps Routes API |
+| Traffic | **Real** | Mapbox live and predicted traffic, compared with what's usual for that hour |
 | The AI trip brief | **Off by choice** | Needs a paid Anthropic API key; see §7 |
 
 Everything degrades rather than breaking. A missing key removes one feature; it
@@ -247,6 +247,22 @@ newer, the job goes red and the previous schedules stay live. Getting close
 (two weeks) is only a yellow warning — VTA's feeds normally run out about three
 weeks after they're published, and a two-week alarm would have been red every
 time.
+
+### Traffic, and when to leave
+Driving times used to assume empty roads — Mapbox's plain driving profile has
+no traffic in it. They now come from its traffic-aware profile, which gives
+two numbers: how long the drive takes *now*, and how long it *usually* takes at
+this hour. The difference is the useful part: the route card says "▲ 6 min
+slower than usual right now", and ten minutes or more makes the brief warn.
+
+For a scheduled drive the question is different: not "how bad is it now" but
+"what will it be like when I leave tomorrow". The traffic profile can predict
+for a departure time, but it quietly ignores an *arrival* time — ask "arrive
+by 9:00" and it answers with right-now traffic. So the server asks twice:
+first "if I left at 8:30, how long?", then "if I left exactly that long before
+9:00, how long?" — which lands on the traffic you'll really meet, and gives the
+email a real **"Leave by 8:41 AM"**. Driving now has the same leave-by answer
+transit got earlier.
 
 ### Live delays
 On top of the timetable, every ride now shows how it's actually running:
@@ -498,8 +514,8 @@ why.
   imprecise, and auto-disables after 60 days without repository activity
 - Parking and civic events are San Francisco only; every Peninsula and East Bay
   destination comes back empty
-- Events and the traffic baseline are still invented (parking availability and
-  break-in risk were removed rather than kept as fake data)
+- Events are still invented (parking availability and break-in risk were
+  removed rather than kept as fake data)
 - Supabase's free tier pauses a project after 7 days of low activity
 - Imported calendar events only refresh when you connect or press "Sync now";
   nothing re-syncs them overnight
@@ -553,8 +569,8 @@ it knows you are taking, and warns you the evening before.
 
 **"How much of the data is real?"**
 Seven sources are live: routing, weather, news, metered parking, garages, 311
-civic events, and 511 highway incidents. Two are still invented: events and the
-traffic baseline. Parking availability and break-in risk used to be invented
+civic events, 511 highway incidents, live transit, and traffic. One is still
+invented: events. Parking availability and break-in risk used to be invented
 too; they were removed rather than shown, because a made-up safety warning on a
 map reads as fact. Each has a documented path to a real source.
 

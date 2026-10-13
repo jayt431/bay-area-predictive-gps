@@ -357,6 +357,22 @@ def _fallback_brief(ctx: dict) -> dict:
             rec = {"drive": "Allow a little extra time for the conditions.",
                    "transit": "Bring an umbrella for the walk to and from the stops."
                    }.get(mode, "Bring a rain layer, or consider driving instead.")
+    # Traffic against what's usual for that hour: ten minutes or more is a
+    # real problem, five is worth a word. Leave-by comes from the same route.
+    delta = ctx.get("traffic_delta_min")
+    if mode == "drive" and delta is not None and delta >= 5:
+        why = _as_sentence(why) + f" Traffic is {delta} min slower than usual for this time."
+        if delta >= 10:
+            risk = "high" if risk == "high" else "medium"
+            if risk != "high":
+                headline = f"Heavy traffic on the way to {dest}: about {delta} min slower than usual."
+            rec = (f"Leave by {ctx['leave_by_text']}." if ctx.get("leave_by_text")
+                   else f"Leave about {delta} min earlier than usual.")
+        elif risk == "none":
+            risk = "low"
+    if mode == "drive" and ctx.get("leave_by_text") and rec == "No action needed.":
+        rec = f"Leave by {ctx['leave_by_text']}."
+
     # Live transit trouble: a cancelled ride or a missed connection is a real
     # threat to the trip; a long delay or a service alert is worth a mention.
     plan = ctx.get("transit") or {}

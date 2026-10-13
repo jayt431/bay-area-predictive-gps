@@ -139,6 +139,10 @@
     .rs-stat .num small { font-size: 12px; color: var(--muted); font-weight: 400; }
     .rs-stat .cap { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
     .rs-stat .num.warn { color: var(--yellow); }
+    .rs-traffic { font-size: 11px; margin-top: 8px; color: var(--muted); }
+    .rs-traffic.slow { color: var(--yellow); }
+    .rs-traffic.bad { color: var(--red); }
+    .rs-traffic.fast { color: var(--green); }
     .rs-stat .num.danger { color: var(--red); }
 
     /* AI trip brief */
@@ -411,6 +415,7 @@
       <div class="rs-stat"><div class="num" id="rs-dist">—</div><div class="cap">Distance</div></div>
       <div class="rs-stat"><div class="num" id="rs-alerts">—</div><div class="cap">On route</div></div>
     </div>
+    <div class="rs-traffic" id="rs-traffic" hidden></div>
     <div id="transit-plan" hidden></div>
     <div id="brief">
       <div class="brief-top">
@@ -641,7 +646,8 @@
     // has no Mapbox profile; it comes from our own planner over 511 schedule
     // data, through /api/transit.
     const MODES = [
-      { id: "drive", label: "Drive", profile: "driving", verb: "Drive", sim: "drive" },
+      // driving-traffic: live traffic, plus a "typical" time to compare with.
+      { id: "drive", label: "Drive", profile: "driving-traffic", verb: "Drive", sim: "drive" },
       { id: "walk",  label: "Walk",  profile: "walking", verb: "Walk",  sim: "walk" },
       { id: "bike",  label: "Bike",  profile: "cycling", verb: "Ride",  sim: "ride" },
       { id: "transit", label: "Transit", profile: null,  verb: "Ride",  sim: "ride" },
@@ -1175,6 +1181,8 @@
       const context = {
         destination: name,
         mode: travelMode,
+        traffic_delta_min: trafficDelta(route),
+        typical_min: route.duration_typical != null ? Math.round(route.duration_typical / 60) : null,
         transit_plan: route.transit
           ? { ...route.transit, segments: route.transit.segments.map(({ coords, ...rest }) => rest) } : null,
         dest_lat: destLat,
@@ -1685,7 +1693,24 @@
       list.innerHTML = html;
     }
 
+    // Traffic now against what's usual at this hour (driving only).
+    function trafficDelta(route) {
+      return travelMode === "drive" && route.duration_typical != null
+        ? Math.round((route.duration - route.duration_typical) / 60) : null;
+    }
+
+    function updateTraffic(route) {
+      const el = document.getElementById("rs-traffic");
+      const delta = trafficDelta(route);
+      if (delta == null) { el.hidden = true; return; }
+      el.hidden = false;
+      if (delta >= 3) { el.className = "rs-traffic " + (delta >= 10 ? "bad" : "slow"); el.textContent = `▲ ${delta} min slower than usual right now`; }
+      else if (delta <= -3) { el.className = "rs-traffic fast"; el.textContent = `▼ ${-delta} min faster than usual right now`; }
+      else { el.className = "rs-traffic"; el.textContent = "Traffic about usual for this time"; }
+    }
+
     function updateSummary(name, route, onRoute) {
+      updateTraffic(route);
       document.getElementById("route-summary").classList.add("open");
       document.getElementById("rs-dest").textContent = name;
       const mins = Math.round(route.duration / 60);

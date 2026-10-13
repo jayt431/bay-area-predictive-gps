@@ -77,7 +77,9 @@ Env vars:
 
 Every source degrades gracefully; a missing key downgrades one feature, never
 breaks the app. **After each meaningful change: commit + push** (backs up to
-GitHub and auto-deploys to Render).
+GitHub and auto-deploys to Render). The transit-schedules bot commits to
+`main` most nights, so `git pull --rebase` before pushing — its commits only
+touch `transit_data/` and rebase cleanly.
 
 ## The web app (primary product)
 
@@ -353,8 +355,17 @@ directly in code.
   chip. **Saved destinations** persist via browser `localStorage` (`bapg_saved`).
 - **Routing**: real route via Mapbox Directions; route summary panel
   shows ETA, distance, and on-route disruption count.
+- **Traffic**: driving uses Mapbox's `driving-traffic` profile — live traffic,
+  plus `duration_typical` for the same hour, so the route card says "▲ 7 min
+  slower than usual right now" (±3 min is "about usual"). The brief gets
+  `traffic_delta_min`: 5+ is mentioned, 10+ is medium risk. For scheduled
+  drives `alerts.route()` predicts traffic at the real departure: the profile
+  honours `depart_at` but **ignores `arrive_by`** (it silently returns current
+  traffic), so it asks with a departure 30 min before arrival, then again
+  leaving that route's duration before arrival, and reports `leave_by_text`
+  for the email and brief. Plain `driving` was traffic-free.
 - **Travel mode**: Drive / Walk / Bike tabs on the route card. All three
-  profiles (`driving`, `walking`, `cycling`) are fetched in parallel on each
+  profiles (`driving-traffic`, `walking`, `cycling`) are fetched in parallel on each
   pick, so every tab shows its own time and switching is instant; the choice
   persists in `localStorage` (`bapg_mode`). The mode decides more than the line:
   parking is drive-only (and a late meters response is dropped if the mode
