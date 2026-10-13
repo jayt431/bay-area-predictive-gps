@@ -30,6 +30,7 @@ import calendar_sync
 import realtime
 import transit
 import mock_data
+import places
 import scheduler
 import store
 import tools
@@ -92,8 +93,9 @@ def health():
 
 @app.route("/api/transit")
 def transit_directions():
-    """Transit options from home to a destination, step by step, with up to
-    two transfers, planned over every Bay Area agency's 511 schedules.
+    """Transit options to a destination, step by step, with up to two
+    transfers, planned over every Bay Area agency's 511 schedules. Starts
+    from `origin_lat`/`origin_lon` when given, else the demo home.
 
     Optional `leave_at` or `arrive_by` (Pacific, "2026-10-20T08:30"); without
     either the trip leaves now. Live data is added only for trips leaving
@@ -110,8 +112,13 @@ def transit_directions():
                 datetime.fromisoformat(value)
             except ValueError:
                 return jsonify({"routes": [], "error": "times must look like 2026-10-20T08:30"}), 400
-    home = mock_data.HOME
-    plan = transit.plan((home["lat"], home["lon"]), (lat, lon),
+    # Where from: whatever the page says (home, current location, a searched
+    # place), else the public demo starting point.
+    try:
+        origin = (float(request.args["origin_lat"]), float(request.args["origin_lon"]))
+    except (KeyError, TypeError, ValueError):
+        origin = (mock_data.HOME["lat"], mock_data.HOME["lon"])
+    plan = transit.plan(origin, (lat, lon),
                         arrive_by=arrive_by or None, depart_at=None if arrive_by else leave_at)
     # Live delays and alerts on top. A deep copy, because the planner caches
     # its result and live data must never be cached as if it were schedule.
@@ -231,7 +238,7 @@ def _weather_point(ctx: dict) -> tuple[float, float, str]:
         return (float(ctx["dest_lat"]), float(ctx["dest_lon"]),
                 ctx.get("destination") or "your destination")
     except (KeyError, TypeError, ValueError):
-        home = mock_data.HOME
+        home = places.home()
         return home["lat"], home["lon"], home["label"]
 
 
@@ -598,6 +605,24 @@ def schedule_settings():
         email = (body.get("alert_email") or "").strip()
         store.set_setting(scheduler.ALERT_EMAIL_KEY, email or None)
     return jsonify({"alert_email": store.get_setting(scheduler.ALERT_EMAIL_KEY)})
+
+
+@app.route("/api/places")
+@requires_passcode
+def get_places():
+    """Your home and saved places. Gated: home is the most personal thing in
+    the app, and the map around it is a public demo."""
+    return jsonify(places.get_places())
+
+
+@app.route("/api/places", methods=["PUT"])
+@requires_passcode
+def put_places():
+    """Replace home and saved places in one go; invalid entries are dropped."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "expected {home, saved}"}), 400
+    return jsonify(places.save_places(body))
 
 
 @app.route("/api/schedule/test-email", methods=["POST"])

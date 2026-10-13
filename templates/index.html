@@ -36,6 +36,21 @@
     #search-panel { position: absolute; z-index: 3; left: 20px; bottom: 20px; width: 340px; padding: 18px; }
     #search-panel .mono-label { margin-bottom: 8px; display: block; }
     .search-wrap { position: relative; }
+    .from-row { display: flex; gap: 6px; align-items: center; margin-bottom: 14px; }
+    .from-wrap { flex: 1; min-width: 0; }
+    #from-input { width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.35); border: 1px solid var(--line);
+      border-radius: 9px; padding: 8px 11px; color: var(--ink); font-size: 13px; font-family: var(--sans); outline: none; }
+    #from-input:focus { border-color: var(--accent); }
+    #from-input::placeholder { color: var(--ink); opacity: 0.85; }
+    .from-btn { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--line);
+      background: none; color: var(--ink); cursor: pointer; font-size: 15px; }
+    .from-btn:hover { border-color: var(--accent); }
+    .from-btn.on { border-color: var(--accent); color: var(--accent); }
+    #from-sugg { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 6; display: none;
+      background: #141418; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+    #from-sugg.open { display: block; }
+    .from-note { font-size: 11px; color: var(--muted); margin: -8px 0 12px; }
+    .from-note button { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 11px; padding: 0; }
     #search-input {
       width: 100%; background: rgba(0,0,0,0.35); border: 1px solid var(--line);
       border-radius: 10px; padding: 12px 14px; color: var(--ink);
@@ -621,6 +636,16 @@
 
   <!-- Search panel -->
   <div id="search-panel" class="glass">
+    <span class="mono-label">From</span>
+    <div class="from-row">
+      <div class="search-wrap from-wrap">
+        <input id="from-input" placeholder="Home" autocomplete="off" aria-label="Starting point" />
+        <div id="from-sugg"></div>
+      </div>
+      <button class="from-btn" id="from-here" title="Start from my current location" aria-label="Start from my current location" onclick="useCurrentLocation()">◎</button>
+      <button class="from-btn on" id="from-home" title="Start from home" aria-label="Start from home" onclick="useHome()">⌂</button>
+    </div>
+    <div class="from-note" id="from-note" hidden></div>
     <span class="mono-label">Destination</span>
     <div class="search-wrap">
       <input id="search-input" placeholder="Where to?" autocomplete="off" />
@@ -656,7 +681,9 @@
       { name: "Ferry Building", lon: -122.3934, lat: 37.7956 },
     ];
 
-    let home = null;         // { label, lat, lon }
+    let home = null;         // { label, lat, lon } — your home once unlocked, else the demo start
+    let origin = null;       // where routes start: { name, lat, lon, kind: "home" | "here" | "place" }
+    let myPlaces = null;     // { home, saved } from the server; null until the passcode unlocks it
     let disruptions = [];    // full Bay Area pool
     let suggIndex = -1;      // keyboard-highlighted suggestion
     let currentDest = null;  // the destination currently routed to
@@ -697,6 +724,7 @@
         fetch("/api/disruptions").then(r => r.json()),
       ]);
       home = cfg.home;
+      origin = { name: "Home", lat: home.lat, lon: home.lon, kind: "home" };
       disruptions = dis.disruptions || [];
       // Only credit 511 when their data is what we actually loaded; the mock
       // pool carries no source.
@@ -719,7 +747,7 @@
 
         // Empty sources; filled as the user routes (init once, update in place)
         map.addSource("route",  { type: "geojson", data: emptyFC() });
-        map.addSource("me",     { type: "geojson", data: pt(home.lon, home.lat) });
+        map.addSource("me",     { type: "geojson", data: pt(origin.lon, origin.lat) });
         map.addSource("dest",   { type: "geojson", data: emptyFC() });
         map.addSource("alerts", { type: "geojson", data: emptyFC() });
         map.addSource("pstreets",   { type: "geojson", data: emptyFC() });
@@ -801,6 +829,8 @@
       });
 
       wireSearch();
+      wireFromSearch();
+      loadMyPlaces();
 
       // Release the camera the instant the user touches the map during a trip,
       // so a single press grabs it (no fighting the per-frame camera update).
@@ -872,7 +902,10 @@
       try { return JSON.parse(localStorage.getItem(SAVED_KEY)) || []; }
       catch { return []; }
     }
-    function persistSaved() { localStorage.setItem(SAVED_KEY, JSON.stringify(saved)); }
+    function persistSaved() {
+      if (myPlaces) { myPlaces.saved = saved.map(({ name, lat, lon }) => ({ name, lat, lon })); savePlaces(); }
+      else { try { localStorage.setItem(SAVED_KEY, JSON.stringify(saved)); } catch {} }
+    }
     function isSaved(name) { return saved.some(s => s.name === name); }
 
     function toggleSaveCurrent() {
@@ -905,6 +938,121 @@
       const on = currentDest && isSaved(currentDest.name);
       btn.classList.toggle("on", !!on);
       btn.title = on ? "Remove from saved" : "Save destination";
+    }
+
+    // ---- Where from: home, current location, or any place ----
+    // Your real home and saved places live on the server behind the schedule
+    // passcode (the map is a public demo); until it's unlocked, routes start
+    // from the demo home and saved places stay in this browser.
+    async function loadMyPlaces() {
+      let res;
+      try { res = await fetch("/api/places", { headers: schedHeaders() }); } catch { return; }
+      if (!res.ok) { myPlaces = null; updateFromUI(); return; }
+      myPlaces = await res.json();
+      // Places saved in this browser before unlocking join the server's list.
+      const local = loadSaved().filter(l => !myPlaces.saved.some(s => s.name === l.name));
+      if (local.length) {
+        myPlaces.saved = [...myPlaces.saved, ...local.map(({ name, lat, lon }) => ({ name, lat, lon }))];
+        await savePlaces();
+        try { localStorage.removeItem(SAVED_KEY); } catch {}
+      }
+      saved = myPlaces.saved.slice();
+      renderSaved(); updateStar();
+      if (myPlaces.home) {
+        home = { label: myPlaces.home.name, lat: myPlaces.home.lat, lon: myPlaces.home.lon };
+        if (origin.kind === "home") setOrigin({ name: "Home", lat: home.lat, lon: home.lon, kind: "home" });
+      }
+      updateFromUI();
+    }
+
+    async function savePlaces() {
+      if (!myPlaces) return;
+      try {
+        const res = await fetch("/api/places", {
+          method: "PUT", headers: schedHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify(myPlaces),
+        });
+        if (res.ok) myPlaces = await res.json();
+      } catch {}
+    }
+
+    function setOrigin(o) {
+      origin = o;
+      updateFromUI();
+      if (window.map && map.getSource && map.getSource("me")) map.getSource("me").setData(pt(o.lon, o.lat));
+      if (currentDest) loadRoutes();
+      else if (window.map && map.flyTo) map.flyTo({ center: [o.lon, o.lat], zoom: Math.max(map.getZoom(), 12) });
+    }
+
+    function useHome() { setOrigin({ name: "Home", lat: home.lat, lon: home.lon, kind: "home" }); }
+
+    function useCurrentLocation() {
+      const note = document.getElementById("from-note");
+      if (!navigator.geolocation) { note.hidden = false; note.textContent = "This browser can't share its location."; return; }
+      note.hidden = false; note.textContent = "Finding you…";
+      navigator.geolocation.getCurrentPosition(
+        pos => setOrigin({ name: "Current location", lat: pos.coords.latitude, lon: pos.coords.longitude, kind: "here" }),
+        err => { note.hidden = false;
+                 note.textContent = err.code === 1 ? "Location permission was declined." : "Couldn't get your location."; },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+    }
+
+    // The From box shows where routes start, and offers to make a non-home
+    // start your home (only with the passcode — home is stored on the server).
+    function updateFromUI() {
+      const input = document.getElementById("from-input");
+      if (document.activeElement !== input) input.value = origin.kind === "home" ? "" : origin.name;
+      input.placeholder = origin.kind === "home" ? (myPlaces && myPlaces.home ? `Home · ${myPlaces.home.name}` : "Home") : "";
+      document.getElementById("from-home").classList.toggle("on", origin.kind === "home");
+      document.getElementById("from-here").classList.toggle("on", origin.kind === "here");
+      const note = document.getElementById("from-note");
+      if (origin.kind === "home") { note.hidden = true; return; }
+      note.hidden = false;
+      note.innerHTML = myPlaces
+        ? `Starting from ${escapeHtml(origin.name)} · <button onclick="makeHome()">Make this home</button>`
+        : `Starting from ${escapeHtml(origin.name)}`;
+    }
+
+    async function makeHome() {
+      if (!myPlaces) return;
+      const name = origin.kind === "here" ? "Current location" : origin.name;
+      myPlaces.home = { name, lat: origin.lat, lon: origin.lon };
+      await savePlaces();
+      home = { label: name, lat: origin.lat, lon: origin.lon };
+      setOrigin({ name: "Home", lat: home.lat, lon: home.lon, kind: "home" });
+    }
+
+    let fromResults = [];
+    function wireFromSearch() {
+      const input = document.getElementById("from-input"), box = document.getElementById("from-sugg");
+      let timer = null;
+      input.addEventListener("input", () => {
+        clearTimeout(timer);
+        const q = input.value.trim();
+        if (q.length < 3) { box.classList.remove("open"); return; }
+        timer = setTimeout(async () => {
+          const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
+            + `?access_token=${TOKEN}&country=US&limit=5&bbox=${BAY_BBOX}&proximity=${BAY_PROX}`;
+          try { fromResults = (await (await fetch(url)).json()).features || []; } catch { fromResults = []; }
+          box.innerHTML = fromResults.map((f, i) => {
+            const name = placeName(f);
+            return `<div class="sugg-item" onmousedown="pickFrom(${i})"><div class="sugg-name">${escapeHtml(name)}</div>
+                      <div class="sugg-sub">${escapeHtml(f.place_name.replace(name + ", ", ""))}</div></div>`;
+          }).join("");
+          box.classList.toggle("open", fromResults.length > 0);
+        }, 250);
+      });
+      input.addEventListener("blur", () => setTimeout(() => {
+        box.classList.remove("open");
+        // An emptied box means "from home again".
+        if (!input.value.trim() && origin.kind !== "home") useHome(); else updateFromUI();
+      }, 150));
+    }
+
+    function pickFrom(i) {
+      const f = fromResults[i];
+      setOrigin({ name: placeName(f), lon: f.center[0], lat: f.center[1], kind: "place" });
+      document.getElementById("from-sugg").classList.remove("open");
     }
 
     // ---- Pick a destination: route to it, then find disruptions on the way ----
@@ -999,7 +1147,7 @@
       // it runs only at commute hours). Ferries belong to the Transit tab,
       // which knows their timetables.
       const url = `https://api.mapbox.com/directions/v5/mapbox/${profile}/`
-        + `${home.lon},${home.lat};${lon},${lat}?geometries=geojson&overview=full&steps=true&exclude=ferry&access_token=${TOKEN}`;
+        + `${origin.lon},${origin.lat};${lon},${lat}?geometries=geojson&overview=full&steps=true&exclude=ferry&access_token=${TOKEN}`;
       const get = async (departAt) => {
         // depart_at must be in the future; for anything else, ask about now.
         const extra = departAt && departAt > new Date(Date.now() + 60000) ? `&depart_at=${localIso(departAt)}` : "";
@@ -1039,7 +1187,8 @@
       try {
         const t = plannedTime();
         const when = t ? (timeMode === "arrive" ? `&arrive_by=${localIso(t)}` : `&leave_at=${localIso(t)}`) : "";
-        const data = await (await fetch(`/api/transit?dest_lat=${lat}&dest_lon=${lon}${when}`)).json();
+        const from = `&origin_lat=${origin.lat}&origin_lon=${origin.lon}`;
+        const data = await (await fetch(`/api/transit?dest_lat=${lat}&dest_lon=${lon}${from}${when}`)).json();
         if (!data.routes || !data.routes.length) { transitError = data.error || "No transit route"; return null; }
         return { options: data.routes, ...transitAsRoute(data.routes[0]) };
       } catch {
@@ -1948,6 +2097,7 @@
       try { localStorage.setItem(PASSCODE_KEY, code); } catch {}
       field.value = "";
       hideLock();
+      loadMyPlaces();
       await refreshSchedule();
     }
 
@@ -2366,8 +2516,8 @@
     async function toggleFeed() {
       if (!openOnlyPanel("feed-panel")) return;
 
-      const focus = currentDestPt || [home.lon, home.lat];
-      const label = currentDest ? currentDest.name : home.label;
+      const focus = currentDestPt || [origin.lon, origin.lat];
+      const label = currentDest ? currentDest.name : (origin.kind === "home" ? home.label : origin.name);
       document.getElementById("feed-place").textContent = `Near ${label}`;
       document.getElementById("feed-list").innerHTML = '<div class="alert-empty">Loading…</div>';
 

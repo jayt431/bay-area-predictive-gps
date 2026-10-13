@@ -85,14 +85,16 @@ touch `transit_data/` and rebase cleanly.
 
 `app.py` (Flask) serves the map GPS at `/` from `templates/index.html`, a single
 self-contained page using Mapbox GL JS + Turf (both CDN). See the Phase 5 notes
-below for the full UX. It is a **single-user** model (fixed home base), distinct
+below for the full UX. It is a **single-user** model (one home, see `places.py`), distinct
 from the three personas the CLI agent still uses.
 
 Endpoints:
 | Route | Purpose |
 |-------|---------|
 | `GET /` | The map GPS UI |
-| `GET /api/config` | Home base (`mock_data.HOME`) |
+| `GET /api/config` | The public demo home (`mock_data.HOME`) — never your real one |
+| `GET /api/places` | Your home and saved places (gated) |
+| `PUT /api/places` | Replace home and saved places; invalid entries dropped (gated) |
 | `GET /api/disruptions` | Bay Area disruption pool. Live 511 SF Bay when `TRAFFIC_511_TOKEN` is set, else mocked |
 | `GET /api/meters?lat&lon` | **Real** SF metered streets (DataSF), grouped by street |
 | `GET /api/transit?dest_lat&dest_lon[&leave_at\|&arrive_by]` | Transit options from home, step by step, up to two transfers, every Bay Area agency (own planner over 511 GTFS), with live delays and service alerts laid over (`realtime.annotate`). `{routes, error?}` |
@@ -183,7 +185,7 @@ predicted:
 
 **The schedule is gated, the map is not.** The map is a public demo; the
 schedule is personal — where you go and when. So `requires_passcode` sits on
-the seven `/api/schedule*` endpoints only, and `/`, `/api/config`,
+the seven `/api/schedule*` endpoints and `/api/places` only, and `/`, `/api/config`,
 `/api/disruptions` and the rest stay open.
 
 One shared passcode, no accounts: there is one user, and a login system would
@@ -349,8 +351,18 @@ on a full-screen dark Mapbox map. Requires `MAPBOX_TOKEN` (env var; also set on
 Render). Uses Mapbox GL JS + Turf (both via CDN). Skipped Figma — designing
 directly in code.
 
-- **Single user, fixed home base** (`mock_data.HOME`, `GET /api/config`). The
-  three personas remain only for the agent + `/map-test`.
+- **Where from** (`places.py`, `/api/places`): routes start from `origin` —
+  home, the browser's current location (◎), or any searched place, chosen in
+  the "From" row. Your real home and saved places are one JSON document in the
+  settings table, **behind the schedule passcode**: the map is public, so
+  `/api/config` only ever serves the demo home (`mock_data.HOME`, SoMa), and
+  the page swaps in your home after unlocking. "Make this home" appears only
+  when unlocked. `places.home()` (yours, else the demo) is what the alert job
+  routes from. `/api/transit` takes `origin_lat`/`origin_lon`. Saved places
+  live on the server once unlocked; anything saved in the browser beforehand
+  is merged in on first unlock. Bounds-checked (Bay Area-ish) so a typo can't
+  put home in the Atlantic. The three personas remain only for the agent +
+  `/map-test`.
 - **Search**: type any Bay Area address (Mapbox Geocoding) or tap a suggested
   chip. **Saved destinations** persist via browser `localStorage` (`bapg_saved`).
 - **Routing**: real route via Mapbox Directions; route summary panel

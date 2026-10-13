@@ -264,6 +264,20 @@ first "if I left at 8:30, how long?", then "if I left exactly that long before
 email a real **"Leave by 8:41 AM"**. Driving now has the same leave-by answer
 transit got earlier.
 
+### Where you start from
+Every route used to start at one hardcoded spot in SoMa. Now a **From** row
+sits above the destination: home, your current location (◎), or any place you
+search. Picking somewhere else offers "Make this home".
+
+Home is the most personal thing in the app, and the map is a public demo, so
+the two are kept apart: everyone else sees the demo starting point, and your
+real home — with your saved places — lives on the server behind the same
+passcode as your schedule. The page only loads them once you've unlocked.
+That also fixed something quietly wrong: the overnight alerts were planning
+your scheduled trips from the demo spot, not from your home. And saved places
+now follow you to other devices instead of living in one browser — which the
+phone app will need.
+
 ### Planning for later: Now, Leave at, Arrive by
 The map used to answer only "if I left right now". The route card now has
 **Now / Leave at / Arrive by** with a time picker, and every mode respects it:

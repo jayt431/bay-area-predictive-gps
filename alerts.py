@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 import requests
 
 import mock_data
+import places
 import transit
 
 _DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/{}/{},{};{},{}"
@@ -171,7 +172,8 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
 
 def build_context(trip: dict) -> dict | None:
     """Assemble the same trip context the browser POSTs to /api/brief."""
-    home = mock_data.HOME
+    # Your real home if you've set one (places.py), else the demo start.
+    home = places.home()
     mode = normalize_mode(trip.get("mode"))
     drawn = route((home["lon"], home["lat"]), (trip["dest_lon"], trip["dest_lat"]), mode=mode,
                   arrive_by=trip.get("next_at") or trip.get("arrive_at"))
