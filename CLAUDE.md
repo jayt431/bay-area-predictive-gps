@@ -170,7 +170,7 @@ domain migration, which left parking looking like a dead button for weeks.
 | `CRON_SECRET` | no | yes | **also** a GitHub Actions repo secret, must match |
 | `APP_URL` | no | no | GitHub Actions repo secret only |
 | `RESEND_API_KEY`, `ALERT_FROM_EMAIL` | no | **not yet set** — `/api/health` reports `email_configured: false` | the Resend account; with the default `onboarding@resend.dev` sender it only delivers to the account owner's address |
-| `TICKETMASTER_API_KEY` | yes | **must be added** | the app's **Consumer Key** at developer.ticketmaster.com (the Consumer Secret isn't used); terms forbid deriving revenue from the API |
+| `TICKETMASTER_API_KEY` | yes | yes | the app's **Consumer Key** at developer.ticketmaster.com (the Consumer Secret isn't used); terms forbid deriving revenue from the API |
 | `ANTHROPIC_API_KEY` | deliberately unset | deliberately unset | deferred on cost; the rule-based brief is the intended behaviour |
 
 Two deliberate asymmetries, both easy to mistake for mistakes:
