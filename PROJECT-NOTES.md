@@ -264,6 +264,34 @@ first "if I left at 8:30, how long?", then "if I left exactly that long before
 email a real **"Leave by 8:41 AM"**. Driving now has the same leave-by answer
 transit got earlier.
 
+### An app on your phone, with notifications
+The site is now an **installable app**: on an iPhone, Safari → Share → Add to
+Home Screen; on Android or desktop Chrome, an Install button. It opens full
+screen with its own icon (the map's teal "you are here" dot).
+
+The point of installing is **notifications**. The overnight alert used to be
+an email that was never even switched on; now it's a buzz on your phone —
+"Work · leave by 8:41 AM — Warriors game near your route" — sent to every
+device you've turned notifications on for, in Schedule → This device. Email
+still works too if it's ever set up.
+
+How it works, in plain terms: when you turn notifications on, your phone's
+push service (Apple's, or Google's on Android) gives the app a private
+address for your device. The server keeps those addresses, behind your
+passcode, and when an alert is due it sends an encrypted message to each one.
+A pair of keys (called VAPID keys) proves the messages really come from this
+server. Two details worth knowing:
+
+- **The server only sends to real push services.** It makes a request to
+  whatever address a device registers, so an arbitrary address could aim it
+  anywhere; only Apple's, Google's, Mozilla's and Microsoft's are accepted.
+- **iPhones only allow this for Home Screen apps.** That's Apple's rule, so
+  the page tells iPhone users to add it to the Home Screen first.
+
+What it doesn't do yet: a real "leave now" notification. Alerts still go out
+the night before, on GitHub's imprecise nightly timer; "leave in 10 minutes,
+BART is delayed" needs something that checks every few minutes.
+
 ### Working on a phone
 The page had no phone layout at all: on a phone-sized screen the schedule
 panel ran off the left edge, the route card sat under the top buttons, and the

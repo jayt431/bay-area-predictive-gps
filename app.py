@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import hmac
+import json
 import os
 import re
 import time
@@ -32,6 +33,7 @@ import transit
 import events
 import mock_data
 import places
+import push
 import scheduler
 import store
 import tools
@@ -57,6 +59,47 @@ def _close_db_scope(exc=None):
 @app.route("/")
 def index():
     return render_template("index.html", mapbox_token=os.environ.get("MAPBOX_TOKEN", ""))
+
+
+# ---- Installable app -------------------------------------------------------
+# The manifest and service worker make the site installable ("Add to Home
+# Screen") and able to receive push notifications. The service worker must be
+# served from the site root: its scope is the folder it's served from.
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    return app.response_class(json.dumps({
+        "name": "Bay Area Predictive GPS",
+        "short_name": "Bay GPS",
+        "description": "Knows about the game, the closure and the delay before you leave.",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#0A0A0B",
+        "theme_color": "#0A0A0B",
+        "icons": [
+            {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png",
+             "purpose": "maskable"},
+        ],
+    }), mimetype="application/manifest+json")
+
+
+@app.route("/sw.js")
+def service_worker():
+    resp = app.send_static_file("sw.js")
+    resp.headers["Content-Type"] = "application/javascript"
+    # Browsers check for a new service worker on load; never let a cache
+    # hold back an update.
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.route("/api/push/key")
+def push_key():
+    """The public VAPID key the browser needs to subscribe. Public by design."""
+    return jsonify({"configured": push.configured(), "public_key": push.public_key()})
 
 
 @app.route("/api/health")
@@ -91,6 +134,7 @@ def health():
         "schedule_locked": bool(os.environ.get("SCHEDULE_PASSCODE")),
         "cron_protected": bool(os.environ.get("CRON_SECRET")),
         "email_configured": bool(os.environ.get("RESEND_API_KEY")),
+        "push_configured": push.configured(),
     })
 
 
@@ -642,6 +686,32 @@ def put_places():
     return jsonify(places.save_places(body))
 
 
+@app.route("/api/push/subscribe", methods=["POST"])
+@requires_passcode
+def push_subscribe():
+    body = request.get_json(silent=True) or {}
+    if not push.add(body.get("subscription"), body.get("label") or ""):
+        return jsonify({"error": "not a push subscription from a known push service"}), 400
+    return jsonify({"devices": len(push.subscriptions())})
+
+
+@app.route("/api/push/unsubscribe", methods=["POST"])
+@requires_passcode
+def push_unsubscribe():
+    body = request.get_json(silent=True) or {}
+    push.remove(str(body.get("endpoint") or ""))
+    return jsonify({"devices": len(push.subscriptions())})
+
+
+@app.route("/api/push/test", methods=["POST"])
+@requires_passcode
+def push_test():
+    """Notify every device now, and say exactly what happened."""
+    result = push.send({"title": "Bay Area GPS", "body": "Notifications work. Trip alerts will arrive here.",
+                        "url": "/", "tag": "test"})
+    return jsonify(result), (200 if result["sent"] else 400)
+
+
 @app.route("/api/schedule/test-email", methods=["POST"])
 @requires_passcode
 def send_test_email():
@@ -663,7 +733,8 @@ def run_alerts():
 
     Protected by `CRON_SECRET` when set. Each occurrence is alerted once —
     the send is recorded per trip and start time, so a cron that fires twice
-    (or retries) does not email twice.
+    (or retries) does not notify twice. Sends a push to every device with
+    notifications on, and email when that's configured.
     """
     secret = os.environ.get("CRON_SECRET")
     if secret:
@@ -694,11 +765,22 @@ def run_alerts():
         outcome = {"trip": trip["label"], "next_at": trip["next_at"],
                    "risk": alert.get("risk"), "source": brief.get("source"),
                    "subject": subject}
+        notification = alerts.push_payload(trip, alert, context)
         if dry_run:
             outcome["body"] = body
+            outcome["push"] = notification
         else:
-            outcome["delivery"] = alerts.send_email(email, subject, body)
-            if outcome["delivery"].get("sent"):
+            # Every channel that's set up: a push to each device, and email.
+            # Delivered by either counts — the alert reached you.
+            pushed = push.send(notification) if push.configured() else None
+            emailed = alerts.send_email(email, subject, body) if (email and os.environ.get("RESEND_API_KEY")) else None
+            sent = bool((pushed and pushed["sent"]) or (emailed and emailed.get("sent")))
+            outcome["delivery"] = {"sent": sent, "push": pushed, "email": emailed}
+            if not sent:
+                outcome["delivery"]["reason"] = (
+                    (pushed or {}).get("reason") or (emailed or {}).get("reason")
+                    or "no channel set up: turn on notifications or add an alert email")
+            if sent:
                 store.set_setting(marker, datetime.utcnow().isoformat(timespec="seconds"))
         results.append(outcome)
 

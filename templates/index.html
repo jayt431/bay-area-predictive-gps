@@ -4,6 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bay Area Predictive GPS</title>
+  <!-- Installable app: the manifest names it and points at its icons; iOS
+       reads its own apple-* tags instead. -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0A0A0B" />
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Bay GPS" />
 
   <link href="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.css" rel="stylesheet" />
   <script src="https://api.mapbox.com/mapbox-gl-js/v3.7.0/mapbox-gl.js"></script>
@@ -639,6 +647,26 @@
           <button class="conn-btn" onclick="sendTestEmail()">Test</button>
         </div>
         <div class="sc-note" id="sched-email-note"></div>
+
+        <span class="mono-label" style="display:block;margin-top:14px">This device</span>
+        <div class="conn-row">
+          <div>
+            <div class="conn-name">Notifications</div>
+            <div class="sc-note" id="push-status">Checking…</div>
+          </div>
+          <button class="conn-btn" id="push-toggle" onclick="togglePush()" hidden>Turn on</button>
+        </div>
+        <div class="sc-pair inline" id="push-test-row" hidden>
+          <button class="conn-btn" onclick="testPush()">Send a test</button>
+        </div>
+        <div class="sc-note" id="push-note"></div>
+        <div class="conn-row" id="install-row" hidden>
+          <div>
+            <div class="conn-name">App</div>
+            <div class="sc-note" id="install-status"></div>
+          </div>
+          <button class="conn-btn" id="install-btn" onclick="installApp()" hidden>Install</button>
+        </div>
       </div>
     </div>
   </div>
@@ -2458,6 +2486,7 @@
       if (cal.connected) document.getElementById("cal-form").hidden = true;
       else document.getElementById("cal-actions").hidden = true;
       if (data.alert_email) document.getElementById("sched-email").value = data.alert_email;
+      updatePushUI();
     }
 
     function toggleCalForm() {
@@ -2577,6 +2606,131 @@
       } catch {
         note.className = "sc-note err";
         note.textContent = "Could not reach the server.";
+      }
+    }
+
+    // ---- Installable app + push notifications ----
+    // The service worker receives pushes while the app is closed (static/sw.js).
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+
+    let installPrompt = null;      // Chrome/Android's deferred "install this app" prompt
+    window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); installPrompt = e; updateInstallUI(); });
+    window.addEventListener("appinstalled", () => { installPrompt = null; updateInstallUI(); });
+
+    const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);     // iPadOS reports as a Mac
+    const isInstalled = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+
+    function updateInstallUI() {
+      const row = document.getElementById("install-row"), btn = document.getElementById("install-btn");
+      const status = document.getElementById("install-status");
+      if (isInstalled()) { row.hidden = false; btn.hidden = true; status.textContent = "Installed on this device."; return; }
+      if (installPrompt) { row.hidden = false; btn.hidden = false; status.textContent = "Add it to this device like an app."; return; }
+      if (isIOS()) {
+        row.hidden = false; btn.hidden = true;
+        status.textContent = "In Safari: Share → Add to Home Screen, then open it from there.";
+        return;
+      }
+      row.hidden = true;
+    }
+
+    async function installApp() {
+      if (!installPrompt) return;
+      installPrompt.prompt();
+      await installPrompt.userChoice;
+      installPrompt = null;
+      updateInstallUI();
+    }
+
+    function vapidKeyBytes(key) {
+      const pad = "=".repeat((4 - key.length % 4) % 4);
+      const raw = atob((key + pad).replace(/-/g, "+").replace(/_/g, "/"));
+      return Uint8Array.from(raw, c => c.charCodeAt(0));
+    }
+
+    function deviceLabel() {
+      const ua = navigator.userAgent;
+      const device = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) || isIOS() ? "iPad" : /Android/.test(ua) ? "Android"
+        : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "Browser";
+      const browser = /Edg\//.test(ua) ? "Edge" : /Firefox/.test(ua) ? "Firefox" : /Chrome/.test(ua) ? "Chrome"
+        : /Safari/.test(ua) ? "Safari" : "";
+      return `${device}${browser ? " · " + browser : ""}`;
+    }
+
+    async function currentPushSubscription() {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+      const reg = await navigator.serviceWorker.ready;
+      return reg.pushManager.getSubscription();
+    }
+
+    // What this device can do, in the order that matters: iPhones need the
+    // app installed first; the server needs its keys; permission can be
+    // blocked; and only then is it simply on or off.
+    async function updatePushUI() {
+      updateInstallUI();
+      const status = document.getElementById("push-status"), btn = document.getElementById("push-toggle");
+      const testRow = document.getElementById("push-test-row");
+      btn.hidden = true; testRow.hidden = true;
+      if (isIOS() && !isInstalled()) { status.textContent = "On iPhone, add the app to your Home Screen first."; return; }
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+        status.textContent = "This browser can't receive notifications."; return;
+      }
+      let key = {};
+      try { key = await (await fetch("/api/push/key")).json(); } catch {}
+      if (!key.configured) { status.textContent = "Not set up on the server yet."; return; }
+      if (Notification.permission === "denied") {
+        status.textContent = "Blocked for this site. Allow notifications in the browser's settings."; return;
+      }
+      const sub = await currentPushSubscription();
+      status.textContent = sub ? "On for this device." : "Off for this device.";
+      btn.textContent = sub ? "Turn off" : "Turn on";
+      btn.hidden = false;
+      testRow.hidden = !sub;
+    }
+
+    async function togglePush() {
+      const note = document.getElementById("push-note");
+      note.className = "sc-note"; note.textContent = "";
+      try {
+        const existing = await currentPushSubscription();
+        if (existing) {
+          await schedFetch("/api/push/unsubscribe", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ endpoint: existing.endpoint }) });
+          await existing.unsubscribe();
+        } else {
+          // Must come from the tap itself: browsers only show the permission
+          // prompt in response to a user action.
+          if (await Notification.requestPermission() !== "granted") { await updatePushUI(); return; }
+          const key = await (await fetch("/api/push/key")).json();
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: vapidKeyBytes(key.public_key) });
+          const res = await schedFetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ subscription: sub.toJSON(), label: deviceLabel() }) });
+          if (!res.ok) {
+            await sub.unsubscribe();
+            const data = await res.json().catch(() => ({}));
+            note.className = "sc-note err"; note.textContent = data.error || "The server didn't accept this device.";
+          } else {
+            note.className = "sc-note ok"; note.textContent = "On. Trip alerts will arrive here.";
+          }
+        }
+      } catch (e) {
+        note.className = "sc-note err"; note.textContent = "Couldn't change notifications on this device.";
+      }
+      await updatePushUI();
+    }
+
+    async function testPush() {
+      const note = document.getElementById("push-note");
+      note.className = "sc-note"; note.textContent = "Sending…";
+      try {
+        const data = await (await schedFetch("/api/push/test", { method: "POST" })).json();
+        note.className = data.sent ? "sc-note ok" : "sc-note err";
+        note.textContent = data.sent ? `Sent to ${data.sent} device${data.sent === 1 ? "" : "s"}.` : `Not sent: ${data.reason || "unknown error"}.`;
+      } catch {
+        note.className = "sc-note err"; note.textContent = "Could not reach the server.";
       }
     }
 

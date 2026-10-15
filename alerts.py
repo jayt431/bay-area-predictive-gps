@@ -308,6 +308,21 @@ def describe_segment(seg: dict) -> str:
     return f"Walk {minutes} min to {seg.get('to') or 'your destination'}"
 
 
+def push_payload(trip: dict, alert: dict, context: dict) -> dict:
+    """The phone notification for one scheduled trip: short enough for a lock
+    screen. Title says which trip and when to leave; body says why."""
+    leave = context.get("leave_by_text") or (context.get("transit") or {}).get("leave_text")
+    label = trip.get("label") or "Your trip"
+    title = f"{label} · leave by {leave}" if leave else label
+    risk = (alert.get("risk") or "none").lower()
+    body = alert.get("headline") or "Your trip looks clear."
+    if alert.get("recommendation") and alert["recommendation"] != "No action needed." and risk != "none":
+        body = f"{body} {alert['recommendation']}"
+    return {"title": title[:80], "body": body[:240], "url": "/",
+            # One notification per trip occurrence: a resend replaces it.
+            "tag": f"trip-{trip.get('id')}-{trip.get('next_at')}", "risk": risk}
+
+
 def format_email(trip: dict, alert: dict, context: dict) -> tuple[str, str]:
     """Subject and plain-text body for one scheduled trip."""
     when = trip.get("next_at", "")
