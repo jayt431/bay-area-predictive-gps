@@ -915,6 +915,7 @@
       wireSearch();
       wireFromSearch();
       loadMyPlaces();
+      startFromCurrentLocation();
 
       // Release the camera the instant the user touches the map during a trip,
       // so a single press grabs it (no fighting the per-frame camera update).
@@ -1210,27 +1211,86 @@
 
     function useHome() { setOrigin({ name: "Home", lat: home.lat, lon: home.lon, kind: "home" }); }
 
-    function useCurrentLocation() {
+    // ---- Start from where you are ----
+    // Trips start from your current location by default: on opening, the
+    // browser's position replaces Home as the starting point (it asks once if
+    // it hasn't been allowed yet). Denied or unavailable falls back to Home
+    // and says why. Coming back to the app refreshes the position, and only
+    // re-plans if you've actually moved — never in the middle of a trip.
+    const MOVED_M = 150;
+    let lastHere = null;       // the most recent position fix, if any
+
+    // Why trips aren't starting from your location, if they aren't. Kept in a
+    // variable so a later redraw of the From box (places loading after
+    // unlock, say) doesn't wipe it.
+    let fromMessage = "";
+    function fromNote(text) {
+      fromMessage = text || "";
       const note = document.getElementById("from-note");
-      if (!navigator.geolocation) { note.hidden = false; note.textContent = "This browser can't share its location."; return; }
-      note.hidden = false; note.textContent = "Finding you…";
-      navigator.geolocation.getCurrentPosition(
-        pos => setOrigin({ name: "Current location", lat: pos.coords.latitude, lon: pos.coords.longitude, kind: "here" }),
-        err => { note.hidden = false;
-                 note.textContent = err.code === 1 ? "Location permission was declined." : "Couldn't get your location."; },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+      note.hidden = !fromMessage;
+      note.textContent = fromMessage;
     }
+
+    function locate({ quiet = false, maxAge = 60000 } = {}) {
+      return new Promise(resolve => {
+        if (!navigator.geolocation) {
+          fromNote(quiet ? "" : "This browser can't share its location."); resolve(null); return;
+        }
+        if (!quiet) fromNote("Finding you…");
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve(lastHere = { lat: pos.coords.latitude, lon: pos.coords.longitude }),
+          err => {
+            const why = err.code === 1 ? "Location permission was declined" : "Couldn't get your location";
+            fromNote(origin.kind === "home" ? `${why}, so trips start from Home.` : `${why}.`);
+            resolve(null);
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: maxAge });
+      });
+    }
+
+    async function useCurrentLocation() {
+      const here = await locate();
+      if (here) setOrigin({ name: "Current location", ...here, kind: "here" });
+    }
+
+    async function startFromCurrentLocation() {
+      let state = "prompt";
+      try { state = (await navigator.permissions.query({ name: "geolocation" })).state; } catch {}
+      if (state === "denied") { fromNote("Location is blocked for this site, so trips start from Home."); return; }
+      const here = await locate({ quiet: true });
+      // Don't override a start you picked yourself while the position was coming in.
+      if (here && origin.kind === "home") setOrigin({ name: "Current location", ...here, kind: "here" });
+    }
+
+    document.addEventListener("visibilitychange", async () => {
+      if (document.visibilityState !== "visible" || !origin || origin.kind !== "here") return;
+      if (document.body.classList.contains("trip-mode")) return;
+      const here = await locate({ quiet: true, maxAge: 30000 });
+      if (!here || origin.kind !== "here") return;
+      const moved = turf.distance(turf.point([origin.lon, origin.lat]), turf.point([here.lon, here.lat]), { units: "meters" });
+      if (moved > MOVED_M) setOrigin({ name: "Current location", ...here, kind: "here" });
+    });
 
     // The From box shows where routes start, and offers to make a non-home
     // start your home (only with the passcode — home is stored on the server).
     function updateFromUI() {
       const input = document.getElementById("from-input");
-      if (document.activeElement !== input) input.value = origin.kind === "home" ? "" : origin.name;
-      input.placeholder = origin.kind === "home" ? (myPlaces && myPlaces.home ? `Home · ${myPlaces.home.name}` : "Home") : "";
+      // Home and current location show as placeholders: the box stays empty
+      // and ready to type a different start into.
+      if (document.activeElement !== input) input.value = origin.kind === "place" ? origin.name : "";
+      input.placeholder = origin.kind === "home" ? (myPlaces && myPlaces.home ? `Home · ${myPlaces.home.name}` : "Home")
+        : origin.kind === "here" ? "Current location" : "";
       document.getElementById("from-home").classList.toggle("on", origin.kind === "home");
       document.getElementById("from-here").classList.toggle("on", origin.kind === "here");
       const note = document.getElementById("from-note");
-      if (origin.kind === "home") { note.hidden = true; return; }
+      if (origin.kind === "home") { note.hidden = !fromMessage; note.textContent = fromMessage; return; }
+      fromMessage = "";
+      if (origin.kind === "here") {
+        // Offer "make this home" only while there's no home yet.
+        note.hidden = !(myPlaces && !myPlaces.home);
+        note.innerHTML = note.hidden ? "" : `Starting from your location · <button onclick="makeHome()">Make this home</button>`;
+        return;
+      }
       note.hidden = false;
       note.innerHTML = myPlaces
         ? `Starting from ${escapeHtml(origin.name)} · <button onclick="makeHome()">Make this home</button>`
@@ -1253,8 +1313,11 @@
         onPick: p => setOrigin({ name: p.name, lon: p.lon, lat: p.lat, kind: "place" }),
       });
       input.addEventListener("blur", () => setTimeout(() => {
-        // An emptied box means "from home again".
-        if (!input.value.trim() && origin.kind !== "home") useHome(); else updateFromUI();
+        // Emptying a typed start goes back to the default: where you are if
+        // that's known, else Home. Tapping in and out changes nothing.
+        if (!input.value.trim() && origin.kind === "place") {
+          if (lastHere) setOrigin({ name: "Current location", ...lastHere, kind: "here" }); else useHome();
+        } else updateFromUI();
       }, 150));
     }
 

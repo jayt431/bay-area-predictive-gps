@@ -380,7 +380,13 @@ directly in code.
 
 - **Where from** (`places.py`, `/api/places`): routes start from `origin` —
   home, the browser's current location (◎), or any searched place, chosen in
-  the "From" row. Your real home and saved places are one JSON document in the
+  the "From" row. **Current location is the default**
+  (`startFromCurrentLocation`): on load the browser's position replaces Home
+  (asking once if not yet allowed); blocked or unavailable falls back to Home
+  with the reason in the From note (`fromNote`, kept across redraws). On
+  returning to the app (`visibilitychange`) the fix is refreshed and the trip
+  re-planned only if you moved more than `MOVED_M` (150 m), never in trip
+  mode. Emptying a typed start reverts to your location, not Home. Your real home and saved places are one JSON document in the
   settings table, **behind the schedule passcode**: the map is public, so
   `/api/config` only ever serves the demo home (`mock_data.HOME`, SoMa), and
   the page swaps in your home after unlocking. "Make this home" appears only
