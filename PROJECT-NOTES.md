@@ -288,6 +288,11 @@ server. Two details worth knowing:
 - **iPhones only allow this for Home Screen apps.** That's Apple's rule, so
   the page tells iPhone users to add it to the Home Screen first.
 
+It was confirmed on a real iPhone: added to the Home Screen, notifications
+turned on, and the test notification arrived through Apple's push service.
+(The desktop app's built-in browser couldn't test it — it can't run the
+service worker that receives pushes — so the phone was the real test.)
+
 What it doesn't do yet: a real "leave now" notification. Alerts still go out
 the night before, on GitHub's imprecise nightly timer; "leave in 10 minutes,
 BART is delayed" needs something that checks every few minutes.
