@@ -73,10 +73,15 @@
       display: none; max-height: 260px; overflow-y: auto; padding: 6px;
     }
     #suggestions.open { display: block; }
+    /* Opaque: the list opens over the From row, which shouldn't show through. */
+    #suggestions { background: rgba(16, 16, 20, 0.98); }
     .sugg-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; }
     .sugg-item:hover, .sugg-item.hi { background: rgba(255,255,255,0.06); }
     .sugg-name { font-size: 14px; color: var(--ink); }
     .sugg-sub  { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+    .sugg-tag { font-size: 10px; color: var(--accent); font-family: var(--mono); margin-left: 4px; }
+    .sugg-head { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--muted); padding: 8px 12px 4px; }
 
     .quick-title { margin: 16px 0 8px; }
     .quick-row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -759,7 +764,6 @@
     let origin = null;       // where routes start: { name, lat, lon, kind: "home" | "here" | "place" }
     let myPlaces = null;     // { home, saved } from the server; null until the passcode unlocks it
     let disruptions = [];    // full Bay Area pool
-    let suggIndex = -1;      // keyboard-highlighted suggestion
     let currentDest = null;  // the destination currently routed to
     // Resolves once the map's sources and layers exist. On a slow phone
     // connection someone can tap a destination before the map has loaded;
@@ -923,53 +927,167 @@
       canvas.addEventListener("wheel", releaseOnTouch, { passive: true });
     }
 
-    // ---- Search: geocode as you type, pick a suggestion ----
-    function wireSearch() {
-      const input = document.getElementById("search-input");
-      let timer = null;
+    // ---- Place search (Mapbox Search Box) ----
+    // Finds businesses and venues, not just addresses: "Crunch" lists the
+    // Crunch Fitness gyms nearest you, "coffee" the nearest cafés. The old
+    // geocoder had almost no businesses in it — "Crunch" found nothing.
+    //
+    // How it works: /suggest returns candidates as you type (no coordinates);
+    // picking one calls /retrieve for its location. Mapbox bills that pair as
+    // one "session" per search, however many letters you type — so each box
+    // keeps one session token until a pick completes it. A suggestion can
+    // also be a whole brand ("Crunch") or category ("Coffee"): picking it
+    // lists that brand's or category's nearest locations instead.
+    // Distances are from wherever the trip starts (`origin`).
+    // If the Search Box fails, the old address geocoder answers instead.
+    const SEARCH_URL = "https://api.mapbox.com/search/searchbox/v1";
+    const SEARCH_BBOX = "-123.2,36.9,-121.2,38.6";      // the whole Bay Area, Santa Rosa to Santa Cruz
+
+    function newSearchSession() {
+      return (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function milesText(m) {
+      if (m == null) return "";
+      const mi = m / 1609.34;
+      return mi < 0.1 ? "nearby" : `${mi < 10 ? mi.toFixed(1) : Math.round(mi)} mi`;
+    }
+
+    // "Crunch Fitness · 350 3rd St": chains need the street to tell branches apart.
+    function placeLabel(name, address, featureType) {
+      const street = (address || "").split(",")[0].trim();
+      return featureType === "poi" && street && !name.includes(street) ? `${name} · ${street}` : name;
+    }
+
+    // "350 3rd St, San Francisco, California 94107, United States" →
+    // "350 3rd St, San Francisco": street and city are what tell places apart.
+    function shortAddress(address) {
+      return (address || "").split(",").map(x => x.trim()).filter(x => x && x !== "United States").slice(0, 2).join(", ");
+    }
+
+    function attachPlaceSearch({ input, box, onPick, onType, near }) {
+      let session = null, items = [], hi = -1, timer = null, seq = 0;
+      const from = () => (near ? near() : origin);
+
+      async function suggest(q, extra = {}) {
+        session = session || newSearchSession();
+        const p = from();
+        const params = new URLSearchParams({ q, session_token: session, access_token: TOKEN, limit: extra.limit || 8,
+          country: "us", language: "en", bbox: SEARCH_BBOX });
+        if (p) { params.set("proximity", `${p.lon},${p.lat}`); params.set("origin", `${p.lon},${p.lat}`); }
+        if (extra.types) params.set("types", extra.types);
+        if (extra.categories) params.set("poi_category", extra.categories);
+        const data = await (await fetch(`${SEARCH_URL}/suggest?${params}`)).json();
+        if (!Array.isArray(data.suggestions)) throw new Error(data.message || "search unavailable");
+        return data.suggestions.map(sg => ({
+          id: sg.mapbox_id, name: sg.name, type: sg.feature_type,
+          group: sg.feature_type === "brand" || sg.feature_type === "category",
+          categories: (sg.poi_category_ids || []).join(","),
+          category: (sg.poi_category || [])[0] || "",
+          address: sg.full_address || (sg.feature_type === "brand" || sg.feature_type === "category" ? "" : sg.place_formatted) || "",
+          distance: sg.distance,
+        }));
+      }
+
+      async function fallback(q) {
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
+          + `?access_token=${TOKEN}&country=US&limit=5&bbox=${BAY_BBOX}&proximity=${BAY_PROX}`;
+        try {
+          const data = await (await fetch(url)).json();
+          return (data.features || []).map(f => ({
+            name: f.address ? `${f.address} ${f.text}` : f.text, type: "address",
+            address: f.place_name.split(", ").slice(1).join(", "), lon: f.center[0], lat: f.center[1],
+          }));
+        } catch { return []; }
+      }
+
+      function render(heading) {
+        hi = -1;
+        if (!items.length) { box.innerHTML = heading ? `<div class="sugg-head">${escapeHtml(heading)} · nothing nearby</div>` : "";
+                             box.classList.toggle("open", !!heading); return; }
+        box.innerHTML = (heading ? `<div class="sugg-head">${escapeHtml(heading)}</div>` : "") + items.map((it, i) => {
+          const meta = it.group ? (it.type === "brand" ? "Brand" : "Category")
+            : [it.category, milesText(it.distance)].filter(Boolean).join(" · ");
+          return `<div class="sugg-item" data-i="${i}">
+            <div class="sugg-name">${escapeHtml(it.name)}${it.group ? ' <span class="sugg-tag">see nearby ›</span>' : ""}</div>
+            <div class="sugg-sub">${escapeHtml([meta, it.group ? "" : shortAddress(it.address)].filter(Boolean).join(" · "))}</div></div>`;
+        }).join("");
+        box.classList.add("open");
+      }
+
+      async function pick(i) {
+        const it = items[i];
+        if (!it) return;
+        if (it.group) {
+          // A brand or category: show its nearest locations, closest first.
+          const my = ++seq;
+          let found = [];
+          try { found = await suggest(it.name, { types: "poi", categories: it.categories, limit: 10 }); } catch {}
+          if (my !== seq) return;
+          if (it.type === "brand") found = found.filter(f => f.name.toLowerCase().includes(it.name.toLowerCase()));
+          items = found.sort((a, b) => (a.distance ?? 1e12) - (b.distance ?? 1e12));
+          render(`${it.name} near ${from() && from().kind !== "home" ? "here" : "you"}`);
+          return;
+        }
+        let place = it.lon != null ? { name: it.name, lon: it.lon, lat: it.lat, address: it.address } : null;
+        if (!place) {
+          try {
+            const params = new URLSearchParams({ session_token: session || newSearchSession(), access_token: TOKEN });
+            const data = await (await fetch(`${SEARCH_URL}/retrieve/${encodeURIComponent(it.id)}?${params}`)).json();
+            const [lon, lat] = data.features[0].geometry.coordinates;
+            place = { name: placeLabel(it.name, it.address, it.type), lon, lat, address: it.address };
+          } catch { return; }
+        }
+        session = null;                       // the pick completes the search session
+        box.classList.remove("open");
+        onPick(place);
+      }
+
       input.addEventListener("input", () => {
+        if (onType) onType();
         clearTimeout(timer);
         const q = input.value.trim();
-        if (q.length < 3) { closeSuggestions(); return; }
-        timer = setTimeout(() => geocode(q), 250);
+        if (q.length < 2) { box.classList.remove("open"); return; }
+        timer = setTimeout(async () => {
+          const my = ++seq;
+          let found;
+          try { found = await suggest(q); } catch { found = await fallback(q); }
+          if (my !== seq) return;             // a newer keystroke's answer wins
+          items = found;
+          render();
+        }, 250);
       });
-      input.addEventListener("keydown", (e) => {
-        const items = document.querySelectorAll(".sugg-item");
-        if (!items.length) return;
-        if (e.key === "ArrowDown") { e.preventDefault(); suggIndex = Math.min(suggIndex + 1, items.length - 1); paintHi(items); }
-        else if (e.key === "ArrowUp") { e.preventDefault(); suggIndex = Math.max(suggIndex - 1, 0); paintHi(items); }
-        else if (e.key === "Enter" && suggIndex >= 0) { e.preventDefault(); items[suggIndex].click(); }
-        else if (e.key === "Escape") { closeSuggestions(); }
+      input.addEventListener("keydown", e => {
+        const rows = box.querySelectorAll(".sugg-item");
+        if (!rows.length || !box.classList.contains("open")) return;
+        if (e.key === "ArrowDown") { e.preventDefault(); hi = Math.min(hi + 1, rows.length - 1); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); hi = Math.max(hi - 1, 0); }
+        else if (e.key === "Enter" && hi >= 0) { e.preventDefault(); pick(hi); return; }
+        else if (e.key === "Escape") { box.classList.remove("open"); return; }
+        else return;
+        rows.forEach((r, i) => r.classList.toggle("hi", i === hi));
+      });
+      // mousedown, not click: it fires before the input's blur closes the list.
+      box.addEventListener("mousedown", e => {
+        const row = e.target.closest(".sugg-item");
+        if (row) { e.preventDefault(); pick(Number(row.dataset.i)); }
+      });
+      return { close: () => box.classList.remove("open") };
+    }
+
+    let destSearch = null;
+    function wireSearch() {
+      destSearch = attachPlaceSearch({
+        input: document.getElementById("search-input"), box: document.getElementById("suggestions"),
+        onPick: p => pickDestination(p.lon, p.lat, escape(p.name)),
       });
       document.addEventListener("click", (e) => {
         if (!document.getElementById("search-panel").contains(e.target)) closeSuggestions();
       });
     }
 
-    async function geocode(q) {
-      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
-        + `?access_token=${TOKEN}&country=US&limit=5&bbox=${BAY_BBOX}&proximity=${BAY_PROX}`;
-      try {
-        const data = await (await fetch(url)).json();
-        renderSuggestions(data.features || []);
-      } catch { closeSuggestions(); }
-    }
-
-    function renderSuggestions(features) {
-      const box = document.getElementById("suggestions");
-      suggIndex = -1;
-      if (!features.length) { closeSuggestions(); return; }
-      box.innerHTML = features.map(f => {
-        const [lon, lat] = f.center;
-        const name = f.text;
-        const sub = f.place_name.replace(f.text + ", ", "");
-        return `<div class="sugg-item" onclick="pickDestination(${lon},${lat},'${escape(name)}')">
-                  <div class="sugg-name">${name}</div><div class="sugg-sub">${sub}</div></div>`;
-      }).join("");
-      box.classList.add("open");
-    }
-    function paintHi(items) { items.forEach((el, i) => el.classList.toggle("hi", i === suggIndex)); }
-    function closeSuggestions() { document.getElementById("suggestions").classList.remove("open"); suggIndex = -1; }
+    function closeSuggestions() { document.getElementById("suggestions").classList.remove("open"); }
 
     function renderQuick() {
       document.getElementById("quick-row").innerHTML = QUICK.map(d =>
@@ -1128,37 +1246,16 @@
       setOrigin({ name: "Home", lat: home.lat, lon: home.lon, kind: "home" });
     }
 
-    let fromResults = [];
     function wireFromSearch() {
-      const input = document.getElementById("from-input"), box = document.getElementById("from-sugg");
-      let timer = null;
-      input.addEventListener("input", () => {
-        clearTimeout(timer);
-        const q = input.value.trim();
-        if (q.length < 3) { box.classList.remove("open"); return; }
-        timer = setTimeout(async () => {
-          const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
-            + `?access_token=${TOKEN}&country=US&limit=5&bbox=${BAY_BBOX}&proximity=${BAY_PROX}`;
-          try { fromResults = (await (await fetch(url)).json()).features || []; } catch { fromResults = []; }
-          box.innerHTML = fromResults.map((f, i) => {
-            const name = placeName(f);
-            return `<div class="sugg-item" onmousedown="pickFrom(${i})"><div class="sugg-name">${escapeHtml(name)}</div>
-                      <div class="sugg-sub">${escapeHtml(f.place_name.replace(name + ", ", ""))}</div></div>`;
-          }).join("");
-          box.classList.toggle("open", fromResults.length > 0);
-        }, 250);
+      const input = document.getElementById("from-input");
+      attachPlaceSearch({
+        input, box: document.getElementById("from-sugg"),
+        onPick: p => setOrigin({ name: p.name, lon: p.lon, lat: p.lat, kind: "place" }),
       });
       input.addEventListener("blur", () => setTimeout(() => {
-        box.classList.remove("open");
         // An emptied box means "from home again".
         if (!input.value.trim() && origin.kind !== "home") useHome(); else updateFromUI();
       }, 150));
-    }
-
-    function pickFrom(i) {
-      const f = fromResults[i];
-      setOrigin({ name: placeName(f), lon: f.center[0], lat: f.center[1], kind: "place" });
-      document.getElementById("from-sugg").classList.remove("open");
     }
 
     // ---- Pick a destination: route to it, then find disruptions on the way ----
@@ -2250,7 +2347,6 @@
     let calCursor = null;     // first day of the month on screen
     let selectedKey = null;   // "YYYY-MM-DD" of the selected day
     let schedWhere = null;    // { name, lat, lon } chosen in the add form
-    let whereResults = [];
 
     const pad2 = n => String(n).padStart(2, "0");
     const dateKey = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -2412,42 +2508,12 @@
     }
 
     function wireWhereSearch() {
-      const input = document.getElementById("sched-where");
-      let timer = null;
-      input.addEventListener("input", () => {
-        schedWhere = null;                     // typed text is not a place until one is picked
-        clearTimeout(timer);
-        const q = input.value.trim();
-        if (q.length < 3) { closeWhereSuggestions(); return; }
-        timer = setTimeout(async () => {
-          const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json`
-            + `?access_token=${TOKEN}&country=US&limit=5&bbox=${BAY_BBOX}&proximity=${BAY_PROX}`;
-          try {
-            whereResults = (await (await fetch(url)).json()).features || [];
-          } catch { whereResults = []; }
-          const box = document.getElementById("where-sugg");
-          box.innerHTML = whereResults.map((f, i) => {
-            const name = placeName(f);
-            return `<div class="sugg-item" onmousedown="pickWhere(${i})">
-              <div class="sugg-name">${escapeHtml(name)}</div>
-              <div class="sugg-sub">${escapeHtml(f.place_name.replace(name + ", ", ""))}</div>
-            </div>`;
-          }).join("");
-          box.classList.toggle("open", whereResults.length > 0);
-        }, 250);
+      attachPlaceSearch({
+        input: document.getElementById("sched-where"), box: document.getElementById("where-sugg"),
+        onType: () => { schedWhere = null; },   // typed text is not a place until one is picked
+        onPick: p => { schedWhere = { name: p.name, lon: p.lon, lat: p.lat };
+                       document.getElementById("sched-where").value = p.name; },
       });
-      input.addEventListener("blur", () => setTimeout(closeWhereSuggestions, 150));
-    }
-
-    // Street addresses carry the house number separately from the street name.
-    const placeName = f => f.address ? `${f.address} ${f.text}` : f.text;
-
-    function pickWhere(i) {
-      const f = whereResults[i];
-      const name = placeName(f);
-      schedWhere = { name, lon: f.center[0], lat: f.center[1] };
-      document.getElementById("sched-where").value = name;
-      closeWhereSuggestions();
     }
 
     function closeWhereSuggestions() { document.getElementById("where-sugg").classList.remove("open"); }

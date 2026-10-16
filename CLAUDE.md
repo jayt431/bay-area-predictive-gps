@@ -390,8 +390,24 @@ directly in code.
   is merged in on first unlock. Bounds-checked (Bay Area-ish) so a typo can't
   put home in the Atlantic. The three personas remain only for the agent +
   `/map-test`.
-- **Search**: type any Bay Area address (Mapbox Geocoding) or tap a suggested
-  chip. **Saved destinations** persist via browser `localStorage` (`bapg_saved`).
+- **Search** (`attachPlaceSearch`, shared by the destination, From and
+  Schedule "Where" boxes): **Mapbox Search Box API**, not the v5 geocoder,
+  which had almost no businesses ("Crunch" returned nothing). `/suggest` as
+  you type, biased to and measured from `origin`, then `/retrieve` for the
+  pick's coordinates; one `session_token` per box until a pick completes it,
+  because Mapbox bills a suggest…retrieve run as **one session** (500 free a
+  month at preview pricing, then $3 per 1,000 — check current pricing).
+  Brand and category suggestions ("Crunch", "Coffee") drill down to their
+  nearest locations, sorted by distance (`types=poi` + the suggestion's
+  `poi_category_ids`; brands also filtered by name, which drops Crunchbase).
+  Picked chains are labelled "Crunch Fitness · 2330 Polk St" so branches and
+  saved places stay distinct; rows show category, distance and a short
+  street-and-city address. If the Search Box fails, the v5 geocoder answers
+  instead. **Licensing:** Search Box (and v5) results are for temporary use;
+  storing them (saved places, scheduled trips) needs a Mapbox agreement for a
+  real product — fine for a personal project. Calendar imports still use v5
+  geocoding server-side. **Saved destinations** live on the server once
+  unlocked (see Where from), in the browser before that.
 - **Routing**: real route via Mapbox Directions; route summary panel
   shows ETA, distance, and on-route disruption count.
 - **When** (route card: Now / Leave at / Arrive by, `timeMode`/`timeValue`,

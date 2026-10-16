@@ -264,6 +264,24 @@ first "if I left at 8:30, how long?", then "if I left exactly that long before
 email a real **"Leave by 8:41 AM"**. Driving now has the same leave-by answer
 transit got earlier.
 
+### Search that finds businesses
+Searching "Crunch" on the phone found nothing. The search box used Mapbox's
+original geocoder, which is built around addresses and knows very few
+businesses — the same weakness that couldn't find "Salesforce Tower" early on.
+It now uses Mapbox's **Search Box**, which is built for places: "Crunch" shows
+the Crunch Fitness gyms with how far each is, and tapping the "Crunch" brand
+lists all of them nearest first (3rd St 0.5 mi, Polk St 1.6 mi, Union St…).
+"Coffee" does the same for cafés. Distances are from wherever you're starting
+— home or your current location. All three search boxes (destination, From,
+and the schedule's "Where") use it.
+
+Two things worth knowing. **Cost:** Mapbox counts one search — however many
+letters you type, plus the pick — as a single "session"; 500 a month are free,
+then about $3 per thousand. **Licensing:** Mapbox's terms treat search results
+as temporary; keeping them (saved places, scheduled trips) is fine for a
+personal project but would need a proper agreement for a real product. If the
+Search Box is ever down, the old address search quietly takes over.
+
 ### An app on your phone, with notifications
 The site is now an **installable app**: on an iPhone, Safari → Share → Add to
 Home Screen; on Android or desktop Chrome, an Install button. It opens full
