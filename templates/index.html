@@ -108,6 +108,13 @@
     .rs-head { display: flex; justify-content: space-between; align-items: center; }
     .star-btn { background: none; border: none; cursor: pointer; color: var(--muted); padding: 2px; display: flex; }
     .rs-actions { display: flex; align-items: center; gap: 6px; }
+    .dest-label { display: flex; align-items: center; justify-content: space-between; }
+    .dest-label .mono-label { margin-bottom: 8px; }
+    .swap-btn { background: none; border: 1px solid var(--line); border-radius: 8px; color: var(--ink);
+      width: 30px; height: 26px; margin-bottom: 6px; cursor: pointer; font-size: 14px; line-height: 1; }
+    .swap-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .swap-mini { font-size: 16px; line-height: 1; color: var(--muted); }
+    .swap-mini:hover { color: var(--accent); }
     .rs-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1;
       padding: 0 2px; }
     .rs-close:hover { color: var(--ink); }
@@ -488,6 +495,7 @@
             <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
           </svg>
         </button>
+        <button class="star-btn swap-mini" onclick="swapTrip()" title="Swap start and destination" aria-label="Swap start and destination">⇅</button>
         <button class="rs-close" onclick="clearRoute()" title="Close route" aria-label="Close route">×</button>
       </div>
     </div>
@@ -725,7 +733,10 @@
       <button class="from-btn on" id="from-home" title="Start from home" aria-label="Start from home" onclick="useHome()">⌂</button>
     </div>
     <div class="from-note" id="from-note" hidden></div>
-    <span class="mono-label">Destination</span>
+    <div class="dest-label">
+      <span class="mono-label">Destination</span>
+      <button class="swap-btn" onclick="swapTrip()" title="Swap start and destination" aria-label="Swap start and destination">⇅</button>
+    </div>
     <div class="search-wrap">
       <input id="search-input" placeholder="Where to?" autocomplete="off" />
       <div id="suggestions" class="glass"></div>
@@ -1201,15 +1212,32 @@
       } catch {}
     }
 
-    function setOrigin(o) {
+    function setOrigin(o, { route = true } = {}) {
       origin = o;
       updateFromUI();
       if (window.map && map.getSource && map.getSource("me")) map.getSource("me").setData(pt(o.lon, o.lat));
+      if (!route) return;
       if (currentDest) loadRoutes();
       else if (window.map && map.flyTo) map.flyTo({ center: [o.lon, o.lat], zoom: Math.max(map.getZoom(), 12) });
     }
 
     function useHome() { setOrigin({ name: "Home", lat: home.lat, lon: home.lon, kind: "home" }); }
+
+    // ⇅: the destination becomes the start and the start the destination —
+    // "how do I get back?" in one tap. Home and your current location become
+    // a fixed point once they're the destination.
+    function swapTrip() {
+      if (!currentDest) return;
+      const from = origin;
+      const fromName = from.kind === "home" ? (myPlaces && myPlaces.home ? myPlaces.home.name : "Home")
+        : from.kind === "here" ? "Your location" : from.name;
+      const to = currentDest;
+      // Swapping back onto Home makes the start Home again, not a copy of it.
+      const isHome = Math.abs(to.lat - home.lat) < 1e-5 && Math.abs(to.lon - home.lon) < 1e-5;
+      setOrigin(isHome ? { name: "Home", lat: home.lat, lon: home.lon, kind: "home" }
+                       : { name: to.name, lat: to.lat, lon: to.lon, kind: "place" }, { route: false });
+      pickDestination(from.lon, from.lat, escape(fromName));
+    }
 
     // ---- Start from where you are ----
     // Trips start from your current location by default: on opening, the
