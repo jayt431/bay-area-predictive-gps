@@ -114,6 +114,29 @@
       width: 30px; height: 26px; margin-bottom: 6px; cursor: pointer; font-size: 14px; line-height: 1; }
     .swap-btn:hover { border-color: var(--accent); color: var(--accent); }
     .swap-mini { font-size: 16px; line-height: 1; color: var(--muted); }
+    /* Stops */
+    .rs-stops { margin: -6px 0 10px; }
+    .stop-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-radius: 8px;
+      border: 1px solid transparent; background: rgba(255,255,255,0.02); margin-bottom: 4px; }
+    .stop-row.dragging { border-color: var(--accent); background: rgba(0,229,199,0.08); }
+    .stop-handle { cursor: grab; color: var(--muted); font-size: 14px; padding: 2px 4px; touch-action: none; user-select: none; }
+    .stop-n { width: 18px; height: 18px; border-radius: 50%; background: #fff; color: #0A0A0B; font-size: 10px;
+      font-weight: 700; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+    .stop-name { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stop-time { font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
+    .stop-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 0 2px; }
+    .stop-x:hover { color: var(--ink); }
+    .add-stop { background: none; border: 1px dashed var(--line); border-radius: 8px; color: var(--accent); width: 100%;
+      padding: 7px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
+    .add-stop:hover { border-color: var(--accent); }
+    .tp-badge.stop { background: #fff; color: #0A0A0B; border-radius: 50%; min-width: 22px; }
+    .cancel-add { display: none; background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer;
+      margin: 0 6px 6px auto; }
+    body.adding-stop .cancel-add { display: inline-block; }
+    /* While adding a stop, the saved and suggested places are back: one tap adds one. */
+    body.has-route.adding-stop #search-panel #saved-section,
+    body.has-route.adding-stop #search-panel .quick-title { display: block !important; }
+    body.has-route.adding-stop #search-panel #quick-row { display: flex !important; }
     .swap-mini:hover { color: var(--accent); }
     .rs-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1;
       padding: 0 2px; }
@@ -143,7 +166,9 @@
     .mode-tab:hover:not(:disabled) { border-color: var(--accent); }
     .mode-tab.on { border-color: var(--accent); color: var(--accent); background: rgba(0,229,199,0.08); }
     .mode-tab:disabled { opacity: 0.4; cursor: default; }
-    #route-summary { max-height: calc(100vh - 230px); overflow-y: auto; }
+    /* Stops above the search panel, whose height varies (the From note, chips):
+       --search-h is measured by a ResizeObserver. 20 px margins + a 10 px gap. */
+    #route-summary { max-height: calc(100vh - var(--search-h, 200px) - 50px); overflow-y: auto; }
     /* Transit itinerary */
     #transit-plan { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
     .tp-head { font-size: 13px; color: var(--muted); }
@@ -457,6 +482,9 @@
     @media (max-width: 640px) {
       #search-panel { left: 8px; right: 8px; bottom: 8px; width: auto; padding: 14px; box-sizing: border-box; }
       body.has-route #search-panel { display: none; }
+      /* Adding a stop swaps the route sheet for the search sheet, and back. */
+      body.has-route.adding-stop #search-panel { display: block; }
+      body.adding-stop #route-summary { display: none !important; }
       #route-summary { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; box-sizing: border-box;
         max-height: 50dvh; padding: 14px 16px; }
       #sched-btn, #nearby-btn { top: 12px; width: 44px; height: 44px; padding: 0; justify-content: center;
@@ -500,6 +528,7 @@
       </div>
     </div>
     <div class="rs-dest" id="rs-dest">—</div>
+    <div class="rs-stops" id="rs-stops"></div>
     <div class="mode-tabs" id="mode-tabs"></div>
     <div class="time-row">
       <div class="time-seg" id="time-seg">
@@ -734,7 +763,8 @@
     </div>
     <div class="from-note" id="from-note" hidden></div>
     <div class="dest-label">
-      <span class="mono-label">Destination</span>
+      <span class="mono-label" id="dest-label-text">Destination</span>
+      <button class="cancel-add" onclick="setAddingStop(false)">Cancel</button>
       <button class="swap-btn" onclick="swapTrip()" title="Swap start and destination" aria-label="Swap start and destination">⇅</button>
     </div>
     <div class="search-wrap">
@@ -775,7 +805,14 @@
     let origin = null;       // where routes start: { name, lat, lon, kind: "home" | "here" | "place" }
     let myPlaces = null;     // { home, saved } from the server; null until the passcode unlocks it
     let disruptions = [];    // full Bay Area pool
-    let currentDest = null;  // the destination currently routed to
+    let currentDest = null;  // the trip's final destination (the last stop)
+    // The trip's destinations in order; the last is where you end up. One
+    // stop is an ordinary trip. "+ Add stop" appends; the list on the route
+    // card reorders (drag ⠿) and removes (×).
+    let stops = [];
+    const MAX_STOPS = 5;
+    let addingStop = false;
+    let routeSeq = 0;        // only the newest route request may draw
     // Resolves once the map's sources and layers exist. On a slow phone
     // connection someone can tap a destination before the map has loaded;
     // picking waits for it instead of drawing into layers that aren't there.
@@ -893,7 +930,13 @@
 
         // Destination marker (white, distinct from disruptions)
         map.addLayer({ id: "dest-core", type: "circle", source: "dest",
-          paint: { "circle-color": "#FFFFFF", "circle-radius": 7, "circle-stroke-width": 3, "circle-stroke-color": "#00E5C7" } });
+          paint: { "circle-color": "#FFFFFF", "circle-stroke-width": 3, "circle-stroke-color": "#00E5C7",
+                   "circle-radius": ["case", ["has", "n"], 10, 7] } });
+        // Stop numbers when a trip has several stops.
+        map.addLayer({ id: "dest-num", type: "symbol", source: "dest", filter: ["has", "n"],
+          layout: { "text-field": ["get", "n"], "text-size": 11, "text-allow-overlap": true,
+                    "text-font": ["DIN Offc Pro Bold", "Arial Unicode MS Bold"] },
+          paint: { "text-color": "#0A0A0B" } });
 
         // Current position during a simulated drive
         map.addSource("nav", { type: "geojson", data: emptyFC() });
@@ -1097,6 +1140,9 @@
       document.addEventListener("click", (e) => {
         if (!document.getElementById("search-panel").contains(e.target)) closeSuggestions();
       });
+      document.getElementById("search-input").addEventListener("keydown", e => {
+        if (e.key === "Escape" && addingStop) setAddingStop(false);
+      });
     }
 
     function closeSuggestions() { document.getElementById("suggestions").classList.remove("open"); }
@@ -1164,7 +1210,8 @@
 
     // Close the route: back to the search sheet, nothing drawn.
     function clearRoute() {
-      currentDest = null; tripRoute = null; routeOptions = {};
+      currentDest = null; tripRoute = null; routeOptions = {}; stops = []; routeSeq++;
+      setAddingStop(false);
       ["route", "dest", "alerts", "pstreets", "pbuildings", "pmeters"].forEach(id => {
         if (map.getSource(id)) map.getSource(id).setData(emptyFC());
       });
@@ -1236,7 +1283,8 @@
       const isHome = Math.abs(to.lat - home.lat) < 1e-5 && Math.abs(to.lon - home.lon) < 1e-5;
       setOrigin(isHome ? { name: "Home", lat: home.lat, lon: home.lon, kind: "home" }
                        : { name: to.name, lat: to.lat, lon: to.lon, kind: "place" }, { route: false });
-      pickDestination(from.lon, from.lat, escape(fromName));
+      // With several stops the whole trip runs backwards.
+      setStops([...stops.slice(0, -1).reverse(), { name: fromName, lon: from.lon, lat: from.lat }]);
     }
 
     // ---- Start from where you are ----
@@ -1351,19 +1399,113 @@
 
     // ---- Pick a destination: route to it, then find disruptions on the way ----
     async function pickDestination(lon, lat, nameEnc) {
-      const name = unescape(nameEnc);
-      document.getElementById("search-input").value = name;
+      const place = { name: unescape(nameEnc), lon, lat };
       closeSuggestions();
-
-      currentDest = { name, lon, lat };
-      const picked = currentDest;
-      updateStar();
+      // A plain pick starts a new trip; while adding a stop it's appended.
+      const next = addingStop && stops.length && stops.length < MAX_STOPS ? [...stops, place] : [place];
+      setAddingStop(false);
       document.body.classList.remove("trip-mode");  // picking a new place exits any active trip
+      await setStops(next);
+    }
 
+    async function setStops(next) {
+      stops = next;
+      currentDest = stops.length ? stops[stops.length - 1] : null;
+      if (!currentDest) { clearRoute(); return; }
+      document.getElementById("search-input").value = stops.length === 1 ? currentDest.name : "";
+      updateStar();
+      const mine = ++routeSeq;
       await mapReady;
-      if (currentDest !== picked) return;          // picked something else while waiting
-      map.getSource("dest").setData(pt(lon, lat));
+      if (mine !== routeSeq) return;              // changed again while the map loaded
+      drawStops();
       await loadRoutes();
+    }
+
+    // Numbered pins when there's more than one stop; one plain pin otherwise.
+    function drawStops() {
+      map.getSource("dest").setData({ type: "FeatureCollection", features: stops.map((st, i) => ({
+        type: "Feature", geometry: { type: "Point", coordinates: [st.lon, st.lat] },
+        properties: stops.length > 1 ? { n: String(i + 1) } : {},
+      })) });
+    }
+
+    function removeStop(i) { setStops(stops.filter((_, k) => k !== i)); }
+
+    function setAddingStop(on) {
+      addingStop = on;
+      document.body.classList.toggle("adding-stop", on);
+      const input = document.getElementById("search-input");
+      input.placeholder = on ? "Add a stop" : "Where to?";
+      document.getElementById("dest-label-text").textContent = on ? `Stop ${stops.length + 1}` : "Destination";
+      if (on) { input.value = ""; input.focus(); }
+      else if (stops.length === 1) input.value = currentDest.name;
+    }
+
+    function startAddStop() {
+      if (stops.length >= MAX_STOPS) return;
+      setAddingStop(true);
+    }
+
+    // The stops on the route card: drag ⠿ to reorder, × to remove, each with
+    // its arrival time. Shown once there's more than one stop.
+    function renderStopList(route) {
+      const box = document.getElementById("rs-stops");
+      const times = stopArrivals(route);
+      const rows = stops.length > 1 ? stops.map((st, i) => `
+        <div class="stop-row" data-i="${i}">
+          <span class="stop-handle" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>
+          <span class="stop-n">${i + 1}</span>
+          <span class="stop-name">${escapeHtml(st.name)}</span>
+          <span class="stop-time">${times[i] ? whenText(times[i]) : ""}</span>
+          <button class="stop-x" onclick="removeStop(${i})" title="Remove stop" aria-label="Remove stop">×</button>
+        </div>`).join("") : "";
+      const add = stops.length < MAX_STOPS ? `<button class="add-stop" onclick="startAddStop()">+ Add stop</button>` : "";
+      box.innerHTML = rows + add;
+      wireStopDrag(box);
+    }
+
+    // When you reach each stop: Mapbox gives a duration per leg; a transit
+    // plan carries a "stop" row per intermediate stop.
+    function stopArrivals(route) {
+      if (route.transit) {
+        const t = route.transit.segments.filter(sg => sg.kind === "stop").map(sg => new Date(sg.arrive));
+        return [...t, route.arriveAt];
+      }
+      let at = route.leaveAt ? route.leaveAt.getTime() : null;
+      return (route.legs || []).map(leg => at == null ? null : new Date(at += leg.duration * 1000));
+    }
+
+    // Reordering with a pointer (mouse or finger) on the ⠿ handle: rows swap
+    // places live as you drag, and the new order is routed when you let go.
+    new ResizeObserver(([entry]) => document.documentElement.style.setProperty(
+      "--search-h", `${Math.ceil(entry.target.getBoundingClientRect().height)}px`))
+      .observe(document.getElementById("search-panel"));
+
+    function wireStopDrag(box) {
+      box.querySelectorAll(".stop-handle").forEach(handle => {
+        handle.addEventListener("pointerdown", e => {
+          e.preventDefault();
+          const row = handle.closest(".stop-row");
+          row.classList.add("dragging");
+          try { handle.setPointerCapture(e.pointerId); } catch {}   // keeps the drag on the handle
+          const move = ev => {
+            const others = [...box.querySelectorAll(".stop-row:not(.dragging)")];
+            const before = others.find(o => { const r = o.getBoundingClientRect(); return ev.clientY < r.top + r.height / 2; });
+            box.insertBefore(row, before || box.querySelector(".add-stop"));
+          };
+          const up = () => {
+            handle.removeEventListener("pointermove", move);
+            handle.removeEventListener("pointerup", up);
+            handle.removeEventListener("pointercancel", up);
+            row.classList.remove("dragging");
+            const order = [...box.querySelectorAll(".stop-row")].map(r => Number(r.dataset.i));
+            if (order.some((v, k) => v !== k)) setStops(order.map(k => stops[k]));
+          };
+          handle.addEventListener("pointermove", move);
+          handle.addEventListener("pointerup", up);
+          handle.addEventListener("pointercancel", up);
+        });
+      });
     }
 
     // ---- When: now, leave at a time, or arrive by a time ----
@@ -1419,14 +1561,11 @@
     // One route per travel mode, fetched together so each tab can show its
     // time and switching between them is instant.
     async function loadRoutes() {
-      const { lon, lat } = currentDest;
-      const picked = currentDest, pickedTime = `${timeMode}|${timeValue}`;
+      const mine = ++routeSeq;
       needsFerry.clear();
-      const results = await Promise.all(MODES.map(m =>
-        m.profile ? fetchRoute(m.profile, lon, lat) : fetchTransit(lon, lat)));
-      if (`${timeMode}|${timeValue}` !== pickedTime) return;   // the time changed meanwhile
+      const results = await Promise.all(MODES.map(m => m.profile ? fetchRoute(m.profile) : fetchTransit()));
+      if (mine !== routeSeq) return;           // the trip, start or time changed meanwhile
       transitChoice = 0;
-      if (currentDest !== picked) return;      // a newer pick has taken over
       routeOptions = {};
       MODES.forEach((m, i) => { routeOptions[m.id] = results[i]; });
       // Walking across the Bay has no route; fall back to a mode that has one.
@@ -1438,13 +1577,14 @@
       await showRoute();
     }
 
-    async function fetchRoute(profile, lon, lat) {
+    async function fetchRoute(profile, points = stops) {
       // exclude=ferry: left to itself Mapbox will put a bike or a walk on the
       // Alameda–South San Francisco ferry (30 km straight across the Bay, and
       // it runs only at commute hours). Ferries belong to the Transit tab,
       // which knows their timetables.
       const url = `https://api.mapbox.com/directions/v5/mapbox/${profile}/`
-        + `${origin.lon},${origin.lat};${lon},${lat}?geometries=geojson&overview=full&steps=true&exclude=ferry&access_token=${TOKEN}`;
+        + [origin, ...points].map(p => `${p.lon},${p.lat}`).join(";")
+        + `?geometries=geojson&overview=full&steps=true&exclude=ferry&access_token=${TOKEN}`;
       const get = async (departAt) => {
         // depart_at must be in the future; for anything else, ask about now.
         const extra = departAt && departAt > new Date(Date.now() + 60000) ? `&depart_at=${localIso(departAt)}` : "";
@@ -1479,19 +1619,103 @@
     // Transit options shaped like a Mapbox route (duration, distance, geometry)
     // so the rest of the map — fitting, disruption matching, the summary —
     // treats every mode alike. The step-by-step plan rides along as `transit`.
-    async function fetchTransit(lon, lat) {
+    async function transitLeg(from, to, when) {
+      const q = `dest_lat=${to.lat}&dest_lon=${to.lon}&origin_lat=${from.lat}&origin_lon=${from.lon}${when}`;
+      return (await fetch(`/api/transit?${q}`)).json();
+    }
+
+    async function fetchTransit(points = stops) {
       transitError = null;
       try {
         const t = plannedTime();
-        const when = t ? (timeMode === "arrive" ? `&arrive_by=${localIso(t)}` : `&leave_at=${localIso(t)}`) : "";
-        const from = `&origin_lat=${origin.lat}&origin_lon=${origin.lon}`;
-        const data = await (await fetch(`/api/transit?dest_lat=${lat}&dest_lon=${lon}${from}${when}`)).json();
-        if (!data.routes || !data.routes.length) { transitError = data.error || "No transit route"; return null; }
-        return { options: data.routes, ...transitAsRoute(data.routes[0]) };
+        if (points.length === 1) {
+          const when = t ? (timeMode === "arrive" ? `&arrive_by=${localIso(t)}` : `&leave_at=${localIso(t)}`) : "";
+          const data = await transitLeg(origin, points[0], when);
+          if (!data.routes || !data.routes.length) { transitError = data.error || "No transit route"; return null; }
+          return { options: data.routes, ...transitAsRoute(data.routes[0]) };
+        }
+        // Several stops: plan leg by leg, each leaving when the last one gets
+        // in — or, arriving by a time, backwards from the end.
+        const ends = [origin, ...points], legs = new Array(points.length);
+        if (timeMode === "arrive" && t) {
+          let deadline = t;
+          for (let i = points.length - 1; i >= 0; i--) {
+            const data = await transitLeg(ends[i], ends[i + 1], `&arrive_by=${localIso(deadline)}`);
+            legs[i] = (data.routes && data.routes[0]) || await walkInstead(data, ends[i], ends[i + 1], deadline, true);
+            if (!legs[i]) { transitError = legError(i, data); return null; }
+            deadline = new Date(legs[i].leave_at);
+          }
+        } else {
+          let start = t;
+          for (let i = 0; i < points.length; i++) {
+            const data = await transitLeg(ends[i], ends[i + 1], start ? `&leave_at=${localIso(start)}` : "");
+            legs[i] = (data.routes && data.routes[0]) || await walkInstead(data, ends[i], ends[i + 1], start || new Date(), false);
+            if (!legs[i]) { transitError = legError(i, data); return null; }
+            start = new Date(legs[i].arrive_at);
+          }
+        }
+        const plan = joinTransitLegs(legs, points);
+        return { options: [plan], ...transitAsRoute(plan) };
       } catch {
         transitError = "Transit directions unavailable";
         return null;
       }
+    }
+
+    // A leg the planner turns down because walking is as fast (a stop around
+    // the corner) shouldn't sink the whole trip: walk that leg instead. `at`
+    // is when the walk starts, or with `backwards`, when it has to end.
+    async function walkInstead(data, from, to, at, backwards) {
+      if (!/walking is about as fast/.test(data.error || "")) return null;
+      try {
+        const url = `https://api.mapbox.com/directions/v5/mapbox/walking/${from.lon},${from.lat};${to.lon},${to.lat}`
+          + `?geometries=geojson&overview=full&access_token=${TOKEN}`;
+        const r = ((await (await fetch(url)).json()).routes || [])[0];
+        if (!r) return null;
+        const leave = backwards ? new Date(at - r.duration * 1000) : at;
+        const arrive = new Date(leave.getTime() + r.duration * 1000);
+        const clock = d => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        return {
+          duration_s: Math.round(r.duration), distance_m: Math.round(r.distance), lines: [],
+          leave_at: leave.toISOString(), leave_text: clock(leave),
+          arrive_at: arrive.toISOString(), arrive_text: clock(arrive),
+          segments: [{ kind: "walk", duration_s: Math.round(r.duration), distance_m: Math.round(r.distance),
+                       coords: r.geometry.coordinates, to: to.name }],
+        };
+      } catch { return null; }
+    }
+
+    function legError(i, data) {
+      const from = i === 0 ? "the start" : stops[i - 1].name;
+      return `No transit from ${from} to ${stops[i].name}: ${data.error || "no route"}`;
+    }
+
+    // Several legs as one plan: their steps in order, with an "arrive at"
+    // row where each stop is reached.
+    function joinTransitLegs(legs, points) {
+      const segments = [];
+      legs.forEach((leg, i) => {
+        segments.push(...leg.segments.map(s => s.kind === "walk" && !s.to ? { ...s, to: points[i].name } : s));
+        if (i < legs.length - 1) segments.push({ kind: "stop", n: i + 1, name: points[i].name,
+                                                 arrive: leg.arrive_at, arrive_text: leg.arrive_text });
+      });
+      const first = legs[0], last = legs[legs.length - 1];
+      const lives = legs.map(l => l.live).filter(Boolean);
+      return {
+        duration_s: Math.round((new Date(last.arrive_at) - new Date(first.leave_at)) / 1000),
+        distance_m: legs.reduce((sum, l) => sum + (l.distance_m || 0), 0),
+        leave_at: first.leave_at, leave_text: first.leave_text,
+        arrive_at: last.arrive_at, arrive_text: last.arrive_text,
+        lines: legs.flatMap(l => l.lines || []),
+        segments,
+        live: lives.length ? {
+          available: lives.some(l => l.available),
+          as_of_text: lives.find(l => l.as_of_text)?.as_of_text,
+          summary: lives.map(l => l.summary).find(x => x && x !== "Running to schedule") || lives.find(l => l.summary)?.summary,
+          arrive_text: last.live && last.live.arrive_text,
+          warnings: lives.flatMap(l => l.warnings || []),
+        } : undefined,
+      };
     }
 
     function transitAsRoute(plan) {
@@ -1500,7 +1724,7 @@
         distance: plan.distance_m,
         leaveAt: plan.leave_at ? new Date(plan.leave_at) : null,
         arriveAt: plan.arrive_at ? new Date(plan.arrive_at) : null,
-        geometry: { type: "LineString", coordinates: plan.segments.flatMap(s => s.coords) },
+        geometry: { type: "LineString", coordinates: plan.segments.flatMap(s => s.coords || []) },
         transit: plan,
       };
     }
@@ -1521,7 +1745,7 @@
       const whole = [turf.lineString(route.geometry.coordinates)];
       if (!route.transit) return whole;
       const parts = route.transit.segments
-        .filter(s => s.coords.length > 1 && !(s.kind === "transit" && OFF_STREET.has(s.vehicle)))
+        .filter(s => s.coords && s.coords.length > 1 && !(s.kind === "transit" && OFF_STREET.has(s.vehicle)))
         .map(s => turf.lineString(s.coords));
       return parts.length ? parts : whole;
     }
@@ -1573,6 +1797,11 @@
           change = `<li class="tp-step"><span class="tp-badge walk">change</span><div>
             <div class="tp-t">Change at ${escapeHtml(seg.from_stop || "")}</div>
             <div class="tp-sub">${wait > 0 ? `${wait} min wait` : "Connect right away"}</div></div></li>`;
+        }
+        if (seg.kind === "stop") {
+          return `<li class="tp-step"><span class="tp-badge stop">${seg.n}</span><div>
+            <div class="tp-t">Arrive at ${escapeHtml(seg.name)}</div>
+            <div class="tp-sub">${seg.arrive_text || ""}</div></div></li>`;
         }
         if (seg.kind === "walk") {
           return `<li class="tp-step"><span class="tp-badge walk">walk</span><div>
@@ -1665,7 +1894,7 @@
       map.setPaintProperty("route-core", "line-dasharray", travelMode === "walk" ? [1, 1.8] : null);
 
       map.getSource("route").setData(route.transit
-        ? { type: "FeatureCollection", features: route.transit.segments.map(seg => ({
+        ? { type: "FeatureCollection", features: route.transit.segments.filter(seg => seg.coords).map(seg => ({
               type: "Feature", geometry: { type: "LineString", coordinates: seg.coords },
               properties: { kind: seg.kind, color: seg.color || null } })) }
         : { type: "Feature", geometry: line, properties: {} });
@@ -1678,7 +1907,8 @@
       // The route plus both ends: a route starts at the nearest road, which
       // can sit well away from the home dot.
       const b = coords.reduce((bb, c) => bb.extend(c), new mapboxgl.LngLatBounds(coords[0], coords[0]))
-        .extend([origin.lon, origin.lat]).extend([lon, lat]);
+        .extend([origin.lon, origin.lat]);
+      stops.forEach(st => b.extend([st.lon, st.lat]));
       lastRouteBounds = b;
       map.fitBounds(b, { padding: fitPadding(), duration: 900 });
 
@@ -1751,7 +1981,7 @@
       document.getElementById("brief-rec").textContent = "";
 
       const context = {
-        destination: name,
+        destination: stops.length > 1 ? `${name} (via ${stops.slice(0, -1).map(st => st.name).join(", ")})` : name,
         mode: travelMode,
         traffic_delta_min: trafficDelta(route),
         depart_at: timeMode !== "now" && route.leaveAt ? localIso(route.leaveAt) : null,
@@ -1881,7 +2111,7 @@
     function startTrip() {
       if (!tripRoute) return;
       document.body.classList.add("trip-mode");
-      tripSteps = (tripRoute.legs && tripRoute.legs[0] && tripRoute.legs[0].steps) || [];
+      tripSteps = (tripRoute.legs || []).flatMap(leg => leg.steps || []);
       stepIndex = 0;
 
       const mins = Math.round(tripRoute.duration / 60);
@@ -2304,7 +2534,8 @@
         ? `${timeMode === "now" ? "Leave now" : `Leave <b>${whenText(route.leaveAt)}</b>`} → arrive <b>${whenText(route.arriveAt)}</b>`
         : "";
       document.getElementById("route-summary").classList.add("open");
-      document.getElementById("rs-dest").textContent = name;
+      document.getElementById("rs-dest").textContent = stops.length > 1 ? `${stops.length} stops · ends at ${name}` : name;
+      renderStopList(route);
       const mins = Math.round(route.duration / 60);
       const miles = (route.distance / 1609.34).toFixed(1);
       document.getElementById("rs-eta").innerHTML = `${mins}<small> min</small>`;

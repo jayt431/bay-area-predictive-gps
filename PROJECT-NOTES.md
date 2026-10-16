@@ -8,7 +8,7 @@ was diagnosed, and how to explain any of it to another person.
 Upload this file into a Claude conversation and ask questions about anything in
 it. It is meant to be talked through, not just read.
 
-**Last updated:** 2026-10-10 · **Live:** https://bay-area-predictive-gps.onrender.com ·
+**Last updated:** 2026-10-16 · **Live:** https://bay-area-predictive-gps.onrender.com ·
 **Repo:** github.com/jayt431/bay-area-predictive-gps
 
 ---
@@ -340,7 +340,7 @@ do. Picking now waits for the map.
 ### A test suite that runs on every push
 Almost every bug this project hit was found by a check run once by hand and
 then thrown away — so nothing stopped the same bug coming back. Those checks
-are now a permanent suite of 45 tests that runs in about three seconds, needs
+are now a permanent suite of 61 tests that runs in about three seconds, needs
 no keys and no internet, and runs automatically on GitHub on every push.
 
 Most tests are named after the bug they guard: "the summary comes from the
@@ -386,6 +386,29 @@ That also fixed something quietly wrong: the overnight alerts were planning
 your scheduled trips from the demo spot, not from your home. And saved places
 now follow you to other devices instead of living in one browser — which the
 phone app will need.
+
+**Your location is now the default start.** Opening the app asks where you
+are (once) and starts trips from there, since that's where you actually leave
+from. If the browser blocks location, it falls back to Home and says why
+under the From box. Coming back to the app after moving more than about a
+block re-plans from the new spot; mid-trip it leaves you alone.
+
+### Swapping, and trips with several stops
+**⇅ swaps** the start and the destination — the trip home from the gym is one
+tap. **"+ Add stop"** turns a trip into a list: gym, then groceries, then
+home. The route card shows each stop with when you'd reach it; drag the ⠿
+handle to reorder, × to drop one, and the map numbers them. With several
+stops, swap reverses the whole list, so the return trip visits them
+backwards.
+
+Driving, walking and biking are one request to Mapbox with the stops as
+waypoints. Transit can't work that way — our planner goes from one place to
+one place — so it plans each leg in turn, each leaving when the previous one
+arrives (or, with "Arrive by", backwards from the deadline). The first test
+of that failed in an instructive way: from SoMa, Safeway on King St is a
+19-minute walk, the planner rightly said *walking is about as fast*, and that
+one sensible answer sank the whole three-stop trip. Now such a leg simply
+becomes a walk. Scheduled trips and alerts still have one destination each.
 
 ### Planning for later: Now, Leave at, Arrive by
 The map used to answer only "if I left right now". The route card now has
@@ -554,6 +577,15 @@ actual timetables. Along the way the "SFO Airport" chip moved from the middle
 of the airfield (routes had to snap 700 m to find a road) to the terminals and
 BART station — which also made transit to SFO work, where it had said "no stop
 near".
+
+### One missing line blanked the whole map
+While building multi-stop trips, an edit dropped a single line from the
+transit itinerary code, leaving a stray `<li>` in the page's JavaScript. A
+syntax error anywhere in a script stops all of it, so the map never loaded —
+yet all 60 tests passed, because they only exercise the Python. It was found
+by checking the page script with Node. That check is now a test: it fails on
+exactly this mistake (verified by putting the stray line back) and runs on
+every push.
 
 ### The 511 token nearly went into a public log
 One small agency's feed returned "not found", and the error message printed

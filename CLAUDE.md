@@ -92,7 +92,9 @@ Env vars:
 schedule DB at a temp file *before* anything is imported (store.py reads its
 path at import). Planner tests run on the committed `transit_data/` for a
 Wednesday a few days out (`next_weekday`), so they don't depend on today;
-live, events and 511 are fixtures. Most tests are named after the bug they
+live, events and 511 are fixtures. `test_page.py` runs `node --check` on the page's inline script (skipped
+without Node), because a JavaScript syntax error blanks the whole map while
+every Python test passes. Most tests are named after the bug they
 guard — they were checked by putting two old bugs back and watching them
 fail. Add one with each fix.
 
@@ -396,6 +398,23 @@ directly in code.
   is merged in on first unlock. Bounds-checked (Bay Area-ish) so a typo can't
   put home in the Atlantic. The three personas remain only for the agent +
   `/map-test`.
+- **Swap and stops** (`stops`, `setStops`, `swapTrip`): a trip is an
+  ordered list of up to `MAX_STOPS` (5); `currentDest` is the last. Picking a
+  place in search starts a new trip; "+ Add stop" (`setAddingStop`, body class
+  `adding-stop`, which on phones swaps the route sheet for the search sheet)
+  appends instead. The route card lists the stops with arrival times
+  (`renderStopList`/`stopArrivals`), drag ⠿ to reorder (pointer events,
+  `wireStopDrag`), × to remove; the map numbers them (`dest-num` layer).
+  ⇅ reverses the whole trip: the start becomes the last stop and the last
+  stop the start (a start that was Home stays kind `home`). Drive / walk /
+  bike send every stop as a Mapbox waypoint (one request, one leg per stop).
+  Transit plans **leg by leg** — forward from the leave time, or backwards
+  from an arrive-by — and `joinTransitLegs` joins them with an "Arrive at"
+  row (`kind: "stop"`, no `coords`, so anything walking segments must allow
+  for that). A leg the planner refuses because walking is as fast becomes a
+  Mapbox walk (`walkInstead`) instead of failing the trip. `routeSeq` drops
+  results from a superseded request. Scheduled trips and alerts are still
+  single-destination.
 - **Search** (`attachPlaceSearch`, shared by the destination, From and
   Schedule "Where" boxes): **Mapbox Search Box API**, not the v5 geocoder,
   which had almost no businesses ("Crunch" returned nothing). `/suggest` as

@@ -293,6 +293,9 @@ def describe_segment(seg: dict) -> str:
     """One itinerary line in plain words, e.g. "Take the N Judah light rail
     toward Ocean Beach from Embarcadero (8:12 AM), 6 stops, get off at
     Church St & Duboce Ave"."""
+    if seg.get("kind") == "stop":
+        when = f" ({seg['arrive_text']})" if seg.get("arrive_text") else ""
+        return f"Arrive at {seg.get('name')}{when}"
     if seg.get("kind") == "transit":
         short, name = seg.get("line") or "", seg.get("line_name") or ""
         label = f"{short} {name}" if short and name and name != short else (short or name)
