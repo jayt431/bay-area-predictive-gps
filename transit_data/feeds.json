@@ -143,8 +143,8 @@
     "agency": "Petaluma Transit",
     "start": "20260810",
     "end": "20991231",
-    "version": "20260910",
-    "generated": "9/10/2026 9:27:35 AM"
+    "version": "20261019",
+    "generated": "10/19/2026 8:35:44 AM"
   },
   "PG": {
     "agency": "PresidiGo",
@@ -227,8 +227,8 @@
     "agency": "Santa Rosa CityBus",
     "start": "20260929",
     "end": "20270213",
-    "version": "20261017",
-    "generated": "10/17/2026 10:14:54 AM"
+    "version": "20261018",
+    "generated": "10/18/2026 10:16:16 AM"
   },
   "SS": {
     "agency": "South City Shuttle",
@@ -267,10 +267,10 @@
   },
   "VN": {
     "agency": "VINE",
-    "start": "20261002",
-    "end": "20261230",
-    "version": "20261002",
-    "generated": "10/2/2026 11:04:48 AM"
+    "start": "20261013",
+    "end": "20261231",
+    "version": "20261019",
+    "generated": "10/19/2026 9:47:02 AM"
   },
   "WC": {
     "agency": "WestCAT",
