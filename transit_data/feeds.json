@@ -24,15 +24,15 @@
     "agency": "Capitol Corridor",
     "start": "20260302",
     "end": "20270103",
-    "version": "20261006",
-    "generated": "10/6/2026 10:20:00 AM"
+    "version": "20261019",
+    "generated": "10/19/2026 10:45:53 PM"
   },
   "BA": {
     "agency": "BART",
     "start": "20260810",
     "end": "20270110",
-    "version": "20260809",
-    "generated": "8/9/2026 9:18:37 PM"
+    "version": "20261019",
+    "generated": "10/19/2026 4:07:51 PM"
   },
   "CC": {
     "agency": "County Connection",
@@ -227,8 +227,8 @@
     "agency": "Santa Rosa CityBus",
     "start": "20260929",
     "end": "20270213",
-    "version": "20261018",
-    "generated": "10/18/2026 10:16:16 AM"
+    "version": "20261019",
+    "generated": "10/19/2026 10:16:46 AM"
   },
   "SS": {
     "agency": "South City Shuttle",
@@ -267,10 +267,10 @@
   },
   "VN": {
     "agency": "VINE",
-    "start": "20261013",
+    "start": "20261019",
     "end": "20261231",
     "version": "20261019",
-    "generated": "10/19/2026 9:47:02 AM"
+    "generated": "10/19/2026 2:44:31 PM"
   },
   "WC": {
     "agency": "WestCAT",
