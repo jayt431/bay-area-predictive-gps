@@ -115,8 +115,8 @@
     "agency": "Marin Transit",
     "start": "20260913",
     "end": "20270110",
-    "version": "20260912",
-    "generated": "9/12/2026 9:14:06 PM"
+    "version": "20261020",
+    "generated": "10/20/2026 2:56:38 PM"
   },
   "MB": {
     "agency": "Mission Bay shuttle",
@@ -227,8 +227,8 @@
     "agency": "Santa Rosa CityBus",
     "start": "20260929",
     "end": "20270213",
-    "version": "20261019",
-    "generated": "10/19/2026 10:16:46 AM"
+    "version": "20261020",
+    "generated": "10/20/2026 10:14:55 AM"
   },
   "SS": {
     "agency": "South City Shuttle",
