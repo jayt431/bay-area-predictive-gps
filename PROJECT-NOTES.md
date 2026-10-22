@@ -47,8 +47,10 @@ Follow one trip through the system:
 4. **The assembled trip is sent to the server** (`POST /api/brief`), which adds
    live weather for the destination and recent local headlines, then produces one
    alert: a risk level, a headline, the reasoning, and one recommendation.
-5. **If the trip is on your schedule**, a nightly job does all of the above
-   without a browser open and emails you the result.
+5. **If the trip is on your schedule**, a clock that ticks every 10 minutes
+   does all of the above without a browser open and sends you the result as a
+   phone notification — the evening before a morning trip, or that morning for
+   a later one.
 
 The important structural idea: **every data source is normalized to the same
 shape.** Swapping a fake source for a real one means rewriting one function's
@@ -140,6 +142,38 @@ empty past the first fortnight.
 
 See §6 for why calendars work this way rather than through "sign in with
 Google."
+
+### A clock that keeps time
+Alerts used to go out from one nightly job on GitHub's free scheduler. It was
+the weak link in the whole promise: the first runs started six and a half
+hours late, runs are sometimes skipped, and GitHub switches the job off after
+60 days without activity in the repository. It also meant everything happened
+once a night, so a "leave now" alert was impossible.
+
+Now a free outside scheduler (cron-job.org) knocks on the app every 10
+minutes (`POST /api/tick`). Each knock asks "is anything due?":
+
+- **Alerts go out at a chosen time.** A trip before noon is announced at 8 PM
+  the evening before; a trip from noon on, at 7 AM that morning. Each is sent
+  once. If sending fails, it tries again an hour later rather than every 10
+  minutes.
+- **The calendar refreshes itself** every 6 hours. Before, imported events
+  only updated when you pressed "Sync now".
+- **The knocking keeps the app awake.** Render's free tier sleeps after 15
+  idle minutes and takes about a minute to wake, which is what made the first
+  visit of the day slow. Supabase pauses a free database after a week of
+  quiet. Regular ticks prevent both.
+
+Two smaller changes came with it. The server now handles four requests at
+once instead of one, and lets a request run two minutes instead of 30
+seconds — before, a slow tick (re-reading a calendar) would have frozen the
+map for everyone, or been cut off halfway. And the knock's reply only counts
+things ("1 sent, 2 waiting"), never names trips, because cron-job.org keeps a
+history of replies on its own website. The old GitHub job stays as a nightly
+backup that knocks on the same door; knocking twice can't send anything twice.
+
+`/api/health` shows `last_tick`: when the clock last ran and what it did. If
+that time is old, the outside scheduler has stopped.
 
 ### Choosing how you travel
 A route card with Drive / Walk / Bike tabs, each showing its travel time. It is
@@ -311,9 +345,9 @@ turned on, and the test notification arrived through Apple's push service.
 (The desktop app's built-in browser couldn't test it — it can't run the
 service worker that receives pushes — so the phone was the real test.)
 
-What it doesn't do yet: a real "leave now" notification. Alerts still go out
-the night before, on GitHub's imprecise nightly timer; "leave in 10 minutes,
-BART is delayed" needs something that checks every few minutes.
+What it doesn't do yet: a real "leave now" notification ("leave in 10
+minutes, BART is delayed"). The clock that makes it possible now exists —
+see "A clock that keeps time" below.
 
 ### Working on a phone
 The page had no phone layout at all: on a phone-sized screen the schedule
@@ -340,7 +374,7 @@ do. Picking now waits for the map.
 ### A test suite that runs on every push
 Almost every bug this project hit was found by a check run once by hand and
 then thrown away — so nothing stopped the same bug coming back. Those checks
-are now a permanent suite of 66 tests that runs in about three seconds, needs
+are now a permanent suite of 72 tests that runs in about three seconds, needs
 no keys and no internet, and runs automatically on GitHub on every push.
 
 Most tests are named after the bug they guard: "the summary comes from the
@@ -702,14 +736,12 @@ why.
 
 - Email alerts need `RESEND_API_KEY` set on Render; until then they compute but
   do not send (the Test button in the Schedule panel confirms it either way)
-- The nightly job is scheduled through GitHub Actions, which is free but
-  imprecise, and auto-disables after 60 days without repository activity
+- Render's free tier allows 750 running hours a month per account; the clock
+  keeps this one service awake all month (~744 hours), which fits only if it's
+  the only free service on the account
 - Parking and civic events are San Francisco only; every Peninsula and East Bay
   destination comes back empty
 - Events need a Ticketmaster key to cover more than Giants games
-- Supabase's free tier pauses a project after 7 days of low activity
-- Imported calendar events only refresh when you connect or press "Sync now";
-  nothing re-syncs them overnight
 - "Connect Google Calendar" still means pasting the secret iCal link, not a
   one-click sign-in (that needs OAuth — see §6)
 

@@ -135,7 +135,17 @@ def health():
         "cron_protected": bool(os.environ.get("CRON_SECRET")),
         "email_configured": bool(os.environ.get("RESEND_API_KEY")),
         "push_configured": push.configured(),
+        # When the clock last ran and what it did (counts only). Stale means
+        # the outside scheduler has stopped calling /api/tick.
+        "last_tick": _last_tick(),
     })
+
+
+def _last_tick() -> dict | None:
+    try:
+        return json.loads(store.get_setting(LAST_TICK_KEY) or "null")
+    except Exception:
+        return None
 
 
 @app.route("/api/transit")
@@ -745,12 +755,8 @@ def run_alerts():
     (or retries) does not notify twice. Sends a push to every device with
     notifications on, and email when that's configured.
     """
-    secret = os.environ.get("CRON_SECRET")
-    if secret:
-        from_cron = hmac.compare_digest(request.headers.get("X-Cron-Secret", ""), secret)
-        # The passcode also opens this, so the UI can trigger a run by hand.
-        if not (from_cron or (_schedule_passcode() and _passcode_ok())):
-            return jsonify({"error": "unauthorized"}), 401
+    if not _cron_ok():
+        return jsonify({"error": "unauthorized"}), 401
 
     hours = request.args.get("within_hours", 24, type=float)
     dry_run = request.args.get("dry_run", "").lower() in ("1", "true", "yes")
@@ -758,42 +764,126 @@ def run_alerts():
     results = []
 
     for trip in scheduler.upcoming(within_hours=hours):
-        marker = f"alerted:{trip['id']}:{trip['next_at']}"
-        if store.get_setting(marker):
+        if store.get_setting(_alert_marker(trip)):
             results.append({"trip": trip["label"], "skipped": "already alerted"})
             continue
-
-        context = alerts.build_context(trip)
-        if not context:
-            results.append({"trip": trip["label"], "error": "could not build a route"})
-            continue
-
-        brief = compute_brief(context)
-        alert = brief.get("alert") or {}
-        subject, body = alerts.format_email(trip, alert, context)
-        outcome = {"trip": trip["label"], "next_at": trip["next_at"],
-                   "risk": alert.get("risk"), "source": brief.get("source"),
-                   "subject": subject}
-        notification = alerts.push_payload(trip, alert, context)
-        if dry_run:
-            outcome["body"] = body
-            outcome["push"] = notification
-        else:
-            # Every channel that's set up: a push to each device, and email.
-            # Delivered by either counts — the alert reached you.
-            pushed = push.send(notification) if push.configured() else None
-            emailed = alerts.send_email(email, subject, body) if (email and os.environ.get("RESEND_API_KEY")) else None
-            sent = bool((pushed and pushed["sent"]) or (emailed and emailed.get("sent")))
-            outcome["delivery"] = {"sent": sent, "push": pushed, "email": emailed}
-            if not sent:
-                outcome["delivery"]["reason"] = (
-                    (pushed or {}).get("reason") or (emailed or {}).get("reason")
-                    or "no channel set up: turn on notifications or add an alert email")
-            if sent:
-                store.set_setting(marker, datetime.utcnow().isoformat(timespec="seconds"))
-        results.append(outcome)
+        results.append(_alert_trip(trip, email, dry_run))
 
     return jsonify({"checked_within_hours": hours, "alerts": results})
+
+
+def _cron_ok() -> bool:
+    """CRON_SECRET in X-Cron-Secret, or — so a run can be started by hand from
+    the UI — the schedule passcode. Open when CRON_SECRET isn't set (local)."""
+    secret = os.environ.get("CRON_SECRET")
+    if not secret:
+        return True
+    from_cron = hmac.compare_digest(request.headers.get("X-Cron-Secret", ""), secret)
+    return from_cron or bool(_schedule_passcode() and _passcode_ok())
+
+
+def _alert_marker(trip: dict) -> str:
+    """Recorded once an occurrence's alert is delivered, so no run sends it twice."""
+    return f"alerted:{trip['id']}:{trip['next_at']}"
+
+
+def _alert_trip(trip: dict, email: str | None, dry_run: bool = False) -> dict:
+    """Route, brief and deliver one trip occurrence. Marks it alerted only
+    when something actually reached you."""
+    context = alerts.build_context(trip)
+    if not context:
+        return {"trip": trip["label"], "error": "could not build a route"}
+
+    brief = compute_brief(context)
+    alert = brief.get("alert") or {}
+    subject, body = alerts.format_email(trip, alert, context)
+    outcome = {"trip": trip["label"], "next_at": trip["next_at"],
+               "risk": alert.get("risk"), "source": brief.get("source"),
+               "subject": subject}
+    notification = alerts.push_payload(trip, alert, context)
+    if dry_run:
+        outcome["body"] = body
+        outcome["push"] = notification
+        return outcome
+    # Every channel that's set up: a push to each device, and email.
+    # Delivered by either counts — the alert reached you.
+    pushed = push.send(notification) if push.configured() else None
+    emailed = alerts.send_email(email, subject, body) if (email and os.environ.get("RESEND_API_KEY")) else None
+    sent = bool((pushed and pushed["sent"]) or (emailed and emailed.get("sent")))
+    outcome["delivery"] = {"sent": sent, "push": pushed, "email": emailed}
+    if not sent:
+        outcome["delivery"]["reason"] = (
+            (pushed or {}).get("reason") or (emailed or {}).get("reason")
+            or "no channel set up: turn on notifications or add an alert email")
+    else:
+        store.set_setting(_alert_marker(trip), datetime.utcnow().isoformat(timespec="seconds"))
+    return outcome
+
+
+# ---------------------------------------------------------------------------
+# The clock
+#
+# An outside scheduler (cron-job.org, free) POSTs /api/tick every 10 minutes.
+# GitHub Actions cron, used before, started hours late and turns itself off
+# after 60 quiet days; a frequent, punctual tick is what lets an alert go out
+# at a chosen time instead of whenever a nightly job happens to run. Every
+# tick is cheap when there's nothing to do: a few reads from the settings
+# table. The pings also keep the free Render service and Supabase awake.
+#
+# The reply is counts only, never trip names: the scheduler keeps a history
+# of responses on a third-party site.
+# ---------------------------------------------------------------------------
+
+SYNC_EVERY = timedelta(hours=6)          # re-read the connected calendar
+RETRY_EVERY = timedelta(hours=1)         # an alert that failed to deliver
+LAST_TICK_KEY = "last_tick"
+SYNC_TRIED_KEY = "calendar_auto_sync_at"
+
+
+def _when(stamp: str | None) -> datetime | None:
+    try:
+        return datetime.fromisoformat(stamp) if stamp else None
+    except ValueError:
+        return None
+
+
+@app.route("/api/tick", methods=["POST"])
+def tick():
+    """Do whatever is due: re-sync the calendar every few hours, and send each
+    trip's alert at its time (`alerts.alert_due_at`). Safe to call as often as
+    you like — each occurrence is alerted once, and a failed delivery is
+    retried at most hourly rather than every tick."""
+    if not _cron_ok():
+        return jsonify({"error": "unauthorized"}), 401
+    now = scheduler.local_now()
+    result = {"at": now.isoformat(timespec="minutes"), "calendar_synced": None,
+              "sent": 0, "failed": 0, "waiting": 0}
+
+    if store.get_setting(scheduler.ICS_URL_KEY):
+        tried = _when(store.get_setting(SYNC_TRIED_KEY))
+        if not tried or now - tried >= SYNC_EVERY:
+            # Recorded before trying, so a dead feed is retried every few
+            # hours rather than on every tick.
+            store.set_setting(SYNC_TRIED_KEY, now.isoformat(timespec="minutes"))
+            result["calendar_synced"] = bool(scheduler.sync_calendar().get("ok"))
+
+    email = store.get_setting(scheduler.ALERT_EMAIL_KEY)
+    for trip in scheduler.upcoming(within_hours=24, now=now):
+        if now < alerts.alert_due_at(datetime.fromisoformat(trip["next_at"])):
+            result["waiting"] += 1
+            continue
+        if store.get_setting(_alert_marker(trip)):
+            continue
+        attempt = f"alert_try:{trip['id']}:{trip['next_at']}"
+        tried = _when(store.get_setting(attempt))
+        if tried and now - tried < RETRY_EVERY:
+            continue
+        store.set_setting(attempt, now.isoformat(timespec="minutes"))
+        outcome = _alert_trip(trip, email)
+        result["sent" if (outcome.get("delivery") or {}).get("sent") else "failed"] += 1
+
+    store.set_setting(LAST_TICK_KEY, json.dumps(result))
+    return jsonify(result)
 
 
 @app.route("/map-test")

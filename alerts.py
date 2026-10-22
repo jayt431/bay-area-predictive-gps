@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 import requests
 
@@ -175,6 +175,20 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
 # a kilometre away. Major events (15,000+) get wider thresholds.
 EVENT_RED_KM = {True: 1.0, False: NEAR_RED_KM}
 EVENT_YELLOW_KM = {True: 3.0, False: NEAR_YELLOW_KM}
+
+
+# When a trip's alert goes out. A morning trip is announced the evening
+# before, so there's time to change plans; a trip from noon on, that morning,
+# when the forecast and the disruption pool are fresher. The clock
+# (POST /api/tick) sends each one at the first tick after this time.
+EVENING_BEFORE = time(20, 0)
+MORNING_OF = time(7, 0)
+
+
+def alert_due_at(start: datetime) -> datetime:
+    if start.hour < 12:
+        return datetime.combine(start.date() - timedelta(days=1), EVENING_BEFORE)
+    return datetime.combine(start.date(), MORNING_OF)
 
 
 def on_route_severity(kind: str | None, km: float) -> str | None:

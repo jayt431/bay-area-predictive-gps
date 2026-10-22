@@ -133,7 +133,8 @@ Endpoints:
 | `POST /api/schedule/settings` | Set the alert email |
 | `POST /api/schedule/unlock` | Validate a passcode without changing anything |
 | `POST /api/schedule/test-email` | Send one fixed email to the alert address and return Resend's exact result |
-| `POST /api/alerts/run` | Brief every trip starting soon and email it. `?dry_run=1` returns the emails instead of sending |
+| `POST /api/tick` | The clock, called every 10 min by cron-job.org: re-sync the calendar every 6 h, send each alert when due. Counts only in the reply |
+| `POST /api/alerts/run` | Brief every trip within `within_hours` (default 24) now, ignoring due times — for manual runs. `?dry_run=1` returns the emails instead of sending |
 | `POST /api/brief` | Pre-trip alert. Claude when `ANTHROPIC_API_KEY` set, else rule-based `_fallback_brief` |
 | `GET /map-test` | Standalone Mapbox pin test (persona data) |
 
@@ -177,7 +178,7 @@ domain migration, which left parking looking like a dead button for weeks.
 | `TRAFFIC_511_TOKEN` | yes | yes | **also** a GitHub Actions repo secret, for the nightly schedule refresh |
 | `DATABASE_URL` | normally commented out | yes | value comes from Supabase → Connect → **Session pooler** |
 | `SCHEDULE_PASSCODE` | no, on purpose | **yes — required** | the passcode typed into the Schedule panel |
-| `CRON_SECRET` | no | yes | **also** a GitHub Actions repo secret, must match |
+| `CRON_SECRET` | no | yes | **also** a GitHub Actions repo secret and the `X-Cron-Secret` header of the cron-job.org job; all must match |
 | `APP_URL` | no | no | GitHub Actions repo secret only |
 | `RESEND_API_KEY`, `ALERT_FROM_EMAIL` | no | **not yet set** — `/api/health` reports `email_configured: false` | the Resend account; with the default `onboarding@resend.dev` sender it only delivers to the account owner's address |
 | `TICKETMASTER_API_KEY` | yes | yes | the app's **Consumer Key** at developer.ticketmaster.com (the Consumer Secret isn't used); terms forbid deriving revenue from the API |
@@ -274,19 +275,29 @@ thresholds — then hands the result to `app.compute_brief()`, the same function
 Each occurrence is alerted once; the send is recorded per trip and start time,
 so a cron that retries does not email twice.
 
-**Scheduling the job.** Render's free tier has no cron, so
-`.github/workflows/trip-alerts.yml` calls `POST /api/alerts/run` nightly.
-GitHub Actions cron is free but imprecise — delayed under load, sometimes
-skipped, and auto-disabled after 60 days without repo activity. Fine for "the
-night before", not for anything time-critical. The first runs on `0 2 * * *`
-started six and a half hours late (about 1:30 AM Pacific), so it now runs at
-`:23` past, off GitHub's busiest top-of-hour slot.
+**The clock.** Render's free tier has no cron, so an outside scheduler
+(cron-job.org, free) POSTs `/api/tick` every 10 minutes with the
+`X-Cron-Secret` header. A tick re-syncs a connected calendar every 6 h
+(`SYNC_EVERY`; the attempt time is stored first so a dead feed isn't refetched
+every tick) and sends each occurrence's alert at `alerts.alert_due_at`: 8 PM
+the evening before for trips before noon, 7 AM that morning otherwise. The
+`alerted:` marker is shared with `/api/alerts/run`, so neither sends twice; a
+failed delivery is retried at most hourly (`alert_try:` marker, `RETRY_EVERY`).
+The reply is **counts only** — cron-job.org stores response history on its
+site — and the same counts are saved as `last_tick`, shown in `/api/health`.
+The ticks also keep the free Render instance (750 h/month per account; this
+uses ~744) and Supabase (pauses after 7 quiet days) awake.
 
-`/api/alerts/run` answers 200 even when nothing was delivered, so the workflow
-counts deliveries itself and fails the run if any alert did not send — a green
-run used to mean only "the server answered". The repository is public and so
-are Actions logs: the step prints counts only, never the response body, which
-names trips and their times.
+`gunicorn.conf.py` (read by gunicorn from the working directory, whatever
+Render's start command is) sets `threads = 4` and `timeout = 120`: with one
+sync worker and a 30 s timeout, a slow tick froze every other request and was
+killed mid-run. The shared caches (`transit`, `realtime`, `events`) hold locks.
+
+`.github/workflows/trip-alerts.yml` is now a nightly backup that POSTs the same
+`/api/tick` at 04:23 UTC (after 8 PM Pacific all year). GitHub cron alone was
+too unreliable — the first runs started six and a half hours late, and it
+auto-disables after 60 days without repo activity. The workflow fails the run
+if `failed` > 0, and prints counts only (the repo and its logs are public).
 
 ## 511 SF Bay (the disruption pool)
 

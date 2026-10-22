@@ -1,23 +1,24 @@
-# Nightly pre-trip alerts.
+# Backup for the clock.
 #
-# Render's free tier has no cron jobs, so the schedule lives here. GitHub
-# Actions cron is free but not punctual: runs can be delayed 30+ minutes under
-# load, occasionally skipped, and are auto-disabled after 60 days with no
-# repository activity. That is acceptable for "tell me the night before" and
-# is not acceptable for anything time-critical — move to a paid scheduler if
-# the timing starts to matter.
+# The clock is an outside scheduler (cron-job.org) calling POST /api/tick
+# every 10 minutes; each tick sends whatever alerts are due. This nightly run
+# calls the same endpoint, so if that scheduler ever stops, the evening-before
+# alerts still go out. Calling it twice is harmless: each alert is sent once.
 #
-# Setup: add two repository secrets (Settings -> Secrets and variables ->
+# GitHub Actions cron alone wasn't enough: runs start late (the first ones
+# six and a half hours late), are sometimes skipped, and are auto-disabled
+# after 60 days with no repository activity.
+#
+# Setup: two repository secrets (Settings -> Secrets and variables ->
 # Actions): APP_URL, e.g. https://bay-area-predictive-gps.onrender.com, and
 # CRON_SECRET, matching the env var of the same name on Render.
 name: Trip alerts
 
 on:
   schedule:
-    # 02:23 UTC = 19:23 Pacific, the evening before. Off the top of the hour,
-    # which GitHub says is its busiest and most delayed slot — the first runs
-    # on "0 2" started six and a half hours late.
-    - cron: "23 2 * * *"
+    # 04:23 UTC = 21:23 PDT / 20:23 PST: after 8 PM Pacific all year, when the
+    # evening-before alerts fall due. Off the top of the hour, GitHub's busiest.
+    - cron: "23 4 * * *"
   workflow_dispatch:          # also runnable by hand from the Actions tab
 
 jobs:
@@ -30,22 +31,16 @@ jobs:
         continue-on-error: true
         run: curl -fsS --max-time 180 "${{ secrets.APP_URL }}/api/health" || true
 
-      - name: Send pre-trip alerts
-        # The endpoint answers 200 even when no email went out, so the run
-        # checks each delivery itself and fails if any did not send — that
-        # failure is what puts a red mark in the Actions tab.
-        #
-        # This repository is public and so are these logs: print counts only,
-        # never the response, which names trips and when they happen.
+      - name: Send due alerts
+        # The reply is counts only. Fail the run if an alert did not deliver,
+        # so it shows red in the Actions tab.
         run: |
           response=$(curl -fsS --max-time 300 --retry 3 --retry-delay 20 \
-            -X POST "${{ secrets.APP_URL }}/api/alerts/run?within_hours=24" \
+            -X POST "${{ secrets.APP_URL }}/api/tick" \
             -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}")
-          sent=$(echo "$response" | jq '[.alerts[] | select(.delivery.sent == true)] | length')
-          skipped=$(echo "$response" | jq '[.alerts[] | select(.skipped)] | length')
-          failed=$(echo "$response" | jq '[.alerts[] | select(.error or (.delivery and .delivery.sent != true))] | length')
-          echo "sent=$sent already_alerted=$skipped failed=$failed"
+          echo "$response" | jq -c '{sent, failed, waiting, calendar_synced}'
+          failed=$(echo "$response" | jq '.failed')
           if [ "$failed" -gt 0 ]; then
-            echo "::error::$failed alert(s) were not delivered. Use Schedule -> Alert email -> Test in the app to see why."
+            echo "::error::$failed alert(s) were not delivered. Use the Test button in the Schedule panel to see why."
             exit 1
           fi
