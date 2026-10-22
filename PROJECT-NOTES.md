@@ -8,7 +8,7 @@ was diagnosed, and how to explain any of it to another person.
 Upload this file into a Claude conversation and ask questions about anything in
 it. It is meant to be talked through, not just read.
 
-**Last updated:** 2026-10-16 · **Live:** https://bay-area-predictive-gps.onrender.com ·
+**Last updated:** 2026-10-22 · **Live:** https://bay-area-predictive-gps.onrender.com ·
 **Repo:** github.com/jayt431/bay-area-predictive-gps
 
 ---
@@ -340,7 +340,7 @@ do. Picking now waits for the map.
 ### A test suite that runs on every push
 Almost every bug this project hit was found by a check run once by hand and
 then thrown away — so nothing stopped the same bug coming back. Those checks
-are now a permanent suite of 61 tests that runs in about three seconds, needs
+are now a permanent suite of 66 tests that runs in about three seconds, needs
 no keys and no internet, and runs automatically on GitHub on every push.
 
 Most tests are named after the bug they guard: "the summary comes from the
@@ -586,6 +586,27 @@ yet all 60 tests passed, because they only exercise the Python. It was found
 by checking the page script with Node. That check is now a test: it fails on
 exactly this mistake (verified by putting the stray line back) and runs on
 every push.
+
+### "Minor possible friction" at 1:20 in the morning
+A drive to a sushi spot at 1:20 AM, empty roads, and the brief said *low
+risk — minor possible friction*. Two rules were behind it. First, anything
+within 2 km of the route counted, and the brief turned even one such "nearby"
+item into low risk while admitting it "may not affect" the trip. Second, the
+nearby things were mostly SF 311 reports filed as "Blocked Street and
+Sidewalk" — and looking at the data, every open one this month was a blocked
+*sidewalk* (272) or a blocked *parking space* (24). Not one closed a lane. A
+check meant to treat only fully blocked roads as serious compared against a
+label the code never produced, so every such report near the route was marked
+serious anyway; that's how a different trip got "Risk: high" for a sidewalk.
+
+Now: an item has to be on the route and able to slow you to count. Nearby
+things and 311 reports are shown as notes, labelled for what they are. 511's
+long-term construction is the subtle one: it's real, but 511 gives only start
+and end dates months apart, not the hours a crew works, so a work zone at 1 AM
+is usually just cones. For a drive, the app already has the honest evidence —
+live traffic compared with what's usual for that hour — so a work zone counts
+only through that. A big event nearby still counts, because its crowd spills
+well past the venue.
 
 ### The 511 token nearly went into a public log
 One small agency's feed returned "not found", and the error message printed

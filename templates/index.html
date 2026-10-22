@@ -1917,9 +1917,7 @@
       let onRoute = [];
       disruptions.forEach(d => {
         const km = kmToRoute(d.lon, d.lat, lines);
-        let severity = null;
-        if (km <= NEAR_RED) severity = "red";
-        else if (km <= NEAR_YELLOW) severity = "yellow";
+        const severity = onRouteSeverity(d.type, km);
         if (!severity) return;
         onRoute.push({ ...d, severity, km,
           reason: `${d.note} (${d.time} · ${km.toFixed(1)} km from route)` });
@@ -1994,7 +1992,7 @@
         dest_lon: destLon,
         eta_min: Math.round(route.duration / 60),
         distance_mi: +(route.distance / 1609.34).toFixed(1),
-        disruptions: onRoute.map(d => ({ name: d.name, severity: d.severity, reason: d.reason })),
+        disruptions: onRoute.map(d => ({ name: d.name, type: d.type, severity: d.severity, reason: d.reason })),
         parking: currentZones.filter(z => z.type !== "garage").map(z => ({ name: z.name, count: z.count })),
       };
       try {
@@ -2541,21 +2539,24 @@
       document.getElementById("rs-eta").innerHTML = `${mins}<small> min</small>`;
       document.getElementById("rs-dist").innerHTML = `${miles}<small> mi</small>`;
       const reds = onRoute.filter(d => d.severity === "red").length;
+      const counted = onRoute.filter(affectsTrip).length;
       const el = document.getElementById("rs-alerts");
-      el.textContent = onRoute.length;
-      el.className = "num" + (reds ? " danger" : onRoute.length ? " warn" : "");
+      el.textContent = counted;
+      el.className = "num" + (reds ? " danger" : counted ? " warn" : "");
     }
 
     function updateBell(onRoute) {
       const badge = document.getElementById("bell-badge");
-      if (!onRoute.length) { badge.style.display = "none"; return; }
+      const counted = onRoute.filter(affectsTrip);
+      if (!counted.length) { badge.style.display = "none"; return; }
       badge.style.display = "flex";
-      badge.textContent = onRoute.length;
+      badge.textContent = counted.length;
       badge.style.background = onRoute.some(d => d.severity === "red") ? "var(--red)" : "var(--yellow)";
     }
 
     function renderAlertList(onRoute) {
-      document.getElementById("alert-count").textContent = onRoute.length ? `${onRoute.length}` : "";
+      const counted = onRoute.filter(affectsTrip).length;
+      document.getElementById("alert-count").textContent = counted ? `${counted}` : "";
       const el = document.getElementById("alert-list");
       // Collapse the minor list whenever the route changes
       document.getElementById("alert-panel").classList.remove("show-minor");
@@ -2564,8 +2565,8 @@
         el.innerHTML = '<div class="alert-empty">Nothing on this route. You\'re clear.</div>';
         return;
       }
-      const urgent = onRoute.filter(d => d.severity === "red");
-      const minor  = onRoute.filter(d => d.severity !== "red");
+      const urgent = onRoute.filter(affectsTrip);
+      const minor  = onRoute.filter(d => !affectsTrip(d));
       const row = d => `
         <div class="alert-item">
           <div class="alert-dot ${d.severity}"></div>
@@ -2574,7 +2575,7 @@
 
       let html = urgent.length
         ? urgent.map(row).join("")
-        : '<div class="alert-empty">No urgent disruptions on this route.</div>';
+        : '<div class="alert-empty">Nothing on this route should slow you down.</div>';
 
       if (minor.length) {
         html += `<div class="alert-more" onclick="toggleMinor(event)">
@@ -3153,6 +3154,20 @@
       } catch { return []; }
     }
 
+    // Red means likely to affect the trip; yellow is a note. Distance decides,
+    // except that a long-term work zone stays a note: 511 gives no daily hours,
+    // so being on one says nothing about a crew being out when you pass — the
+    // drive's traffic comparison says that. Same rule as alerts.on_route_severity.
+    function onRouteSeverity(type, km) {
+      if (km > NEAR_YELLOW) return null;
+      return km <= NEAR_RED && type !== "construction" ? "red" : "yellow";
+    }
+
+    // What the count, the bell and the brief treat as risk: anything red, and a
+    // big event's crowd, which spills well past the venue. Everything else is a
+    // note in the alert panel.
+    function affectsTrip(d) { return d.severity === "red" || d.type === "event"; }
+
     async function civicNearRoute(destLon, destLat, lines) {
       const events = await fetchCivic(destLon, destLat, 1800);
       const out = [];
@@ -3161,8 +3176,8 @@
         if (km > NEAR_YELLOW) return;
         const severity = (e.severity === "red" && km <= NEAR_RED) ? "red" : "yellow";
         out.push({
-          name: `${e.icon} ${e.name}`, lat: e.lat, lon: e.lon, severity, km,
-          reason: `${e.category}${e.detail ? " — " + e.detail : ""} · ${e.status} · reported ${e.time} (${km.toFixed(1)} km from route)`,
+          name: `${e.icon} ${e.name}`, lat: e.lat, lon: e.lon, severity, km, type: "report",
+          reason: `311 report${e.detail ? " — " + e.detail : ""} · ${e.status} · reported ${e.time} (${km.toFixed(1)} km from route)`,
         });
       });
       return out;

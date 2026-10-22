@@ -392,9 +392,15 @@ def _as_sentence(text: str) -> str:
 
 def _fallback_brief(ctx: dict) -> dict:
     """Deterministic brief from the assembled trip, no model call."""
+    # Only what is likely to affect the trip scores. Red is on the route; a
+    # yellow is a note — off the route, a blocked sidewalk, or a long-term work
+    # zone with no hours — and never raises the risk on its own, because "no
+    # risk" has to mean no risk. The one yellow that counts is a big event's
+    # crowd, which spills well past its venue.
     disruptions = ctx.get("disruptions") or []
     reds = [d for d in disruptions if d.get("severity") == "red"]
-    yellows = [d for d in disruptions if d.get("severity") == "yellow"]
+    crowds = [d for d in disruptions if d.get("severity") == "yellow" and d.get("type") == "event"]
+    notes = [d for d in disruptions if d.get("severity") != "red" and d not in crowds]
     dest = ctx.get("destination", "your destination")
     mode = alerts.normalize_mode(ctx.get("mode"))
     trip_word = {"drive": "drive", "walk": "walk", "bike": "ride", "transit": "trip"}[mode]
@@ -404,16 +410,19 @@ def _fallback_brief(ctx: dict) -> dict:
         headline = f"{reds[0]['name']} is likely to affect your trip to {dest}."
         why = f"{len(reds)} disruption(s) sit on your route, including {reds[0]['name']}. " + _as_sentence(reds[0].get("reason", ""))
         rec = "Consider leaving earlier or taking an alternate route."
-    elif yellows:
+    elif crowds:
         risk = "low"
-        headline = f"Minor possible friction on the way to {dest}."
-        why = f"{len(yellows)} item(s) are near your route but may not affect it, e.g. {yellows[0]['name']}."
-        rec = "No action needed, but keep an eye out near the flagged area."
+        headline = f"{crowds[0]['name']} is near your route to {dest}."
+        why = _as_sentence(crowds[0].get("reason", ""))
+        rec = "Allow a few extra minutes around the venue."
     else:
         risk = "none"
         headline = f"Clear {trip_word} to {dest}."
-        why = "No disruptions were detected on your route."
+        why = "Nothing on your route is expected to slow you down."
         rec = "No action needed."
+    if notes and not reds:
+        more = f" and {len(notes) - 1} more" if len(notes) > 1 else ""
+        why = _as_sentence(why) + f" Noted, but not expected to affect you: {notes[0]['name']}{more}."
 
     parking = ctx.get("parking") or []
     if parking:

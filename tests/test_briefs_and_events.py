@@ -36,6 +36,49 @@ def test_missed_connection_raises_risk():
     assert b["risk"] == "medium" and "next option" in b["recommendation"]
 
 
+def test_nearby_items_alone_are_no_risk():
+    # 1:20 AM, nothing on the road, and the brief said "minor possible
+    # friction" because a report sat within 2 km of the route. A note is not a risk.
+    note = {"name": "Blocked sidewalk", "type": "report", "severity": "yellow", "reason": "1.4 km from route"}
+    b = brief(mode="drive", disruptions=[note], traffic_delta_min=0)
+    assert b["risk"] == "none" and b["headline"].startswith("Clear drive")
+    assert "not expected to affect you: Blocked sidewalk" in b["why"]
+
+
+def test_a_crash_on_the_route_is_still_high():
+    crash = {"name": "Crash · I-80 E", "type": "incident", "severity": "red", "reason": "0.1 km from route"}
+    assert brief(mode="drive", disruptions=[crash])["risk"] == "high"
+
+
+def test_a_big_event_nearby_is_low_not_none():
+    game = {"name": "Giants vs. Dodgers", "type": "event", "severity": "yellow", "reason": "Oracle Park"}
+    assert brief(mode="drive", disruptions=[game])["risk"] == "low"
+
+
+def test_long_term_work_zone_on_the_route_is_a_note():
+    # 511 lists months-long work zones with no daily hours; being on one says
+    # nothing about a crew being out. Crashes on the route still count.
+    assert alerts.on_route_severity("construction", 0.1) == "yellow"
+    assert alerts.on_route_severity("incident", 0.1) == "red"
+    assert alerts.on_route_severity("incident", 1.5) == "yellow"
+    assert alerts.on_route_severity("incident", 2.5) is None
+
+
+def test_311_blocked_sidewalks_are_notes_with_honest_labels():
+    import mock_data
+    rows = [{"service_name": "Blocked Street and Sidewalk", "service_subtype": "blocked_sidewalk",
+             "status_description": "Open", "requested_datetime": "2026-10-20T10:00:00",
+             "address": "1 Main St", "lat": "37.79", "long": "-122.39"},
+            {"service_name": "Blocked Street and Sidewalk", "service_subtype": "blocked_parking_space_or_strip",
+             "status_description": "Open", "requested_datetime": "2026-10-20T10:00:00",
+             "address": "2 Main St", "lat": "37.79", "long": "-122.39"}]
+    response = mock.Mock(json=lambda: rows, raise_for_status=lambda: None)
+    with mock.patch("mock_data.requests.get", return_value=response):
+        found = mock_data.get_civic_events(37.79, -122.39)["events"]
+    assert [e["name"] for e in found] == ["Blocked sidewalk", "Blocked parking space"]
+    assert {e["severity"] for e in found} == {"yellow"}
+
+
 def test_traffic_phrase():
     assert alerts.traffic_phrase({"traffic_delta_min": 7}) == "7 min slower than usual"
     assert alerts.traffic_phrase({"traffic_delta_min": 1}) == "about usual for that time"

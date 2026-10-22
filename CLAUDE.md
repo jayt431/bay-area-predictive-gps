@@ -602,6 +602,16 @@ directly in code.
 - **Disruptions**: pool in `mock_data` (`GET /api/disruptions`); frontend keeps
   those within 0.5km (red) / 2km (yellow) of the route line (Turf). Native GL
   circle/symbol layers, not HTML markers (fixes zoom jank). Bell + alert panel.
+  **Red means likely to affect the trip; yellow is a note and never raises the
+  risk** ("no risk" must mean none). Exceptions to distance, the same on page
+  (`onRouteSeverity`, `affectsTrip`) and server (`alerts.on_route_severity`):
+  511 long-term construction stays yellow even on the route — 511 gives only
+  start/end dates, no daily hours, so for a drive the traffic comparison is the
+  evidence; SF 311 "Blocked Street and Sidewalk" cases are yellow always — in
+  practice they are blocked sidewalks and parking spaces, no lane closures; a
+  big event's yellow still counts (low risk), since crowds spill. Items carry
+  `type` to the brief. The "On route" number, bell and panel header count only
+  what affects the trip; the rest are "minor notes".
 - **Parking** (`GET /api/meters`, auto-shows on a driving route): "Show on
   map" zooms in and draws a curb line for each real metered street (snapped to
   the nearest road) and outlines for **real garages** — pulled from the map's

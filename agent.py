@@ -135,7 +135,11 @@ Judgment rules:
 - Weigh only what plausibly affects THIS trip. A red disruption on the route \
 matters; a distant or timing-irrelevant one does not.
 - Say RISK: none when nothing meaningfully threatens the trip. Do not invent \
-a threat to seem useful.
+a threat to seem useful. A YELLOW item is a note, not a risk: off the route, a \
+blocked sidewalk or parking space, or a long-term work zone with no published \
+hours. Yellow items alone mean RISK: none, except a big event's crowd. For a \
+drive, the live comparison with usual traffic for the hour is the evidence of \
+whether anything (a work zone included) is slowing the road right now.
 - Parking pressure at the destination is worth a mention when it looks tight, \
 but it is secondary to route disruptions.
 - The travel mode changes what matters. Driving: road incidents and parking. \
@@ -180,7 +184,8 @@ def _format_trip_context(ctx: dict) -> str:
     disruptions = ctx.get("disruptions") or []
     if disruptions:
         for d in disruptions:
-            lines.append(f"  - [{d.get('severity', '?').upper()}] {d.get('name')}: {d.get('reason', '')}")
+            kind = f" ({d['type']})" if d.get("type") else ""
+            lines.append(f"  - [{d.get('severity', '?').upper()}] {d.get('name')}{kind}: {d.get('reason', '')}")
     else:
         lines.append("  - none detected on this route")
     plan = ctx.get("transit") or {}

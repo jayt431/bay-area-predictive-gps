@@ -519,8 +519,19 @@ _SF311_URL = "https://data.sf.gov/resource/vw6y-z8j6.json"
 # Deliberately narrow: only categories that actually block or obstruct the way.
 # The 311 firehose (streetlights, graffiti, tree work, etc.) is intentionally
 # excluded — it's noise, not something that affects a drive.
+#
+# Despite the name, open "Blocked Street and Sidewalk" cases are blocked
+# sidewalks and blocked parking spaces (October 2026: 272 and 24 of 296; no
+# other subtype). None closes a traffic lane, so they are notes, never risk:
+# shown as "nearby", never red. They used to be red, which put "Risk: high"
+# on trips past a sandwich board.
 _MOBILITY_CATEGORIES = {
-    "Blocked Street and Sidewalk": ("Road/sidewalk blocked", "🚧", "red"),
+    "Blocked Street and Sidewalk": ("Blocked street or sidewalk", "🚧", "yellow"),
+}
+# The honest label for each subtype seen in the data.
+_311_SUBTYPE_LABELS = {
+    "blocked_sidewalk": "Blocked sidewalk",
+    "blocked_parking_space_or_strip": "Blocked parking space",
 }
 
 
@@ -553,12 +564,12 @@ def get_civic_events(lat: float, lon: float, radius: int = 1500,
         except (KeyError, TypeError, ValueError):
             continue
         cat = r.get("service_name", "")
-        label, icon, base = _MOBILITY_CATEGORIES.get(cat, ("Civic report", "•", "yellow"))
+        label, icon, severity = _MOBILITY_CATEGORIES.get(cat, ("Civic report", "•", "yellow"))
         status = (r.get("status_description") or "").strip()
-        # An open "Blocked way" is the most likely to actually affect a trip.
-        severity = "red" if (label == "Blocked way" and status.lower() == "open") else base
-        subtype = (r.get("service_subtype") or "").replace("_", " ").strip()
-        detail = subtype if subtype and subtype.lower() not in ("other", "", label.lower()) else ""
+        raw_subtype = (r.get("service_subtype") or "").strip().lower()
+        label = _311_SUBTYPE_LABELS.get(raw_subtype, label)
+        subtype = raw_subtype.replace("_", " ")
+        detail = subtype if subtype and subtype not in ("other", label.lower()) and raw_subtype not in _311_SUBTYPE_LABELS else ""
         events.append({
             "name": label,               # friendly, e.g. "Blocked way"
             "detail": detail,            # cleaned subtype when meaningful

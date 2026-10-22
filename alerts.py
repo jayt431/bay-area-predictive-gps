@@ -177,6 +177,21 @@ EVENT_RED_KM = {True: 1.0, False: NEAR_RED_KM}
 EVENT_YELLOW_KM = {True: 3.0, False: NEAR_YELLOW_KM}
 
 
+def on_route_severity(kind: str | None, km: float) -> str | None:
+    """Red means it is likely to affect the trip; yellow is a note.
+
+    Distance decides, except for long-term construction: 511 lists work zones
+    that run for months with no daily hours, so being on one says nothing
+    about whether a crew is out when you pass. It stays a note; for a drive,
+    the live traffic comparison is what says whether anything is slow.
+    The page applies the same rule (`onRouteSeverity`)."""
+    if km > NEAR_YELLOW_KM:
+        return None
+    if km <= NEAR_RED_KM and kind != "construction":
+        return "red"
+    return "yellow"
+
+
 def events_on_route(trip: dict, drawn: dict, mode: str) -> list[dict]:
     """Big events near the route whose busy window overlaps the trip.
 
@@ -197,7 +212,7 @@ def events_on_route(trip: dict, drawn: dict, mode: str) -> list[dict]:
         if not severity:
             continue
         effect = "expect crowded trains and buses" if mode == "transit" else "expect heavy traffic"
-        found.append({"name": e["name"], "severity": severity,
+        found.append({"name": e["name"], "type": "event", "severity": severity,
                       "reason": f"{events.describe(e)}; {effect} ({km:.1f} km from route)"})
     return found
 
@@ -216,11 +231,12 @@ def build_context(trip: dict) -> dict | None:
     lines = drawn.get("street_lines") or [drawn["coords"]]
     for disruption in mock_data.get_disruptions():
         km = min(point_to_line_km((disruption["lon"], disruption["lat"]), line) for line in lines)
-        severity = "red" if km <= NEAR_RED_KM else "yellow" if km <= NEAR_YELLOW_KM else None
+        severity = on_route_severity(disruption.get("type"), km)
         if not severity:
             continue
         on_route.append({
             "name": disruption["name"],
+            "type": disruption.get("type"),
             "severity": severity,
             "reason": f"{disruption.get('note', '')} ({disruption.get('time', '')} · {km:.1f} km from route)",
         })
