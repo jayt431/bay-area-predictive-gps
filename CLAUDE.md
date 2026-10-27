@@ -283,7 +283,7 @@ every tick) and sends each occurrence's alert at `alerts.alert_due_at`: 8 PM
 the evening before for trips before noon, 7 AM that morning otherwise. The
 `alerted:` marker is shared with `/api/alerts/run`, so neither sends twice; a
 failed delivery is retried at most hourly (`alert_try:` marker, `RETRY_EVERY`).
-The reply is **counts only** — cron-job.org stores response history on its
+Set up and verified 2026-10-26 (ticks 10 min apart). The reply is **counts only** — cron-job.org stores response history on its
 site — and the same counts are saved as `last_tick`, shown in `/api/health`.
 The ticks also keep the free Render instance (750 h/month per account; this
 uses ~744) and Supabase (pauses after 7 quiet days) awake.

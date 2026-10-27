@@ -8,7 +8,7 @@ was diagnosed, and how to explain any of it to another person.
 Upload this file into a Claude conversation and ask questions about anything in
 it. It is meant to be talked through, not just read.
 
-**Last updated:** 2026-10-22 · **Live:** https://bay-area-predictive-gps.onrender.com ·
+**Last updated:** 2026-10-26 · **Live:** https://bay-area-predictive-gps.onrender.com ·
 **Repo:** github.com/jayt431/bay-area-predictive-gps
 
 ---
@@ -174,6 +174,8 @@ backup that knocks on the same door; knocking twice can't send anything twice.
 
 `/api/health` shows `last_tick`: when the clock last ran and what it did. If
 that time is old, the outside scheduler has stopped.
+
+Set up and confirmed on 2026-10-26: ticks arrived at 10:10 and 10:20 PM.
 
 ### Choosing how you travel
 A route card with Drive / Walk / Bike tabs, each showing its travel time. It is
