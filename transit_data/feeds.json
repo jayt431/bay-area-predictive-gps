@@ -24,8 +24,8 @@
     "agency": "Capitol Corridor",
     "start": "20261026",
     "end": "20270103",
-    "version": "20261025",
-    "generated": "10/25/2026 9:03:08 PM"
+    "version": "20261027",
+    "generated": "10/27/2026 1:07:41 AM"
   },
   "BA": {
     "agency": "BART",
@@ -176,10 +176,10 @@
   },
   "SC": {
     "agency": "VTA",
-    "start": "20260810",
+    "start": "20261026",
     "end": "20270110",
-    "version": "20261022",
-    "generated": "10/22/2026 6:42:28 PM"
+    "version": "20261027",
+    "generated": "10/27/2026 1:02:00 AM"
   },
   "SE": {
     "agency": "Solano Express",
