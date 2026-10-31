@@ -227,8 +227,8 @@
     "agency": "Santa Rosa CityBus",
     "start": "20260929",
     "end": "20270213",
-    "version": "20261022",
-    "generated": "10/22/2026 6:54:06 PM"
+    "version": "20261030",
+    "generated": "10/30/2026 10:12:21 AM"
   },
   "SS": {
     "agency": "South City Shuttle",
@@ -241,8 +241,8 @@
     "agency": "SolTrans",
     "start": "20260908",
     "end": "20271231",
-    "version": "20261003",
-    "generated": "10/3/2026 10:41:34 AM"
+    "version": "20261030",
+    "generated": "10/30/2026 10:41:17 AM"
   },
   "TF": {
     "agency": "Treasure Island Ferry",
