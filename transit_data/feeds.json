@@ -143,15 +143,15 @@
     "agency": "Petaluma Transit",
     "start": "20260810",
     "end": "20991231",
-    "version": "20261021",
-    "generated": "10/21/2026 3:15:17 PM"
+    "version": "20261102",
+    "generated": "11/2/2026 9:02:41 AM"
   },
   "PG": {
     "agency": "PresidiGo",
     "start": "20220530",
-    "end": "20261030",
-    "version": "20250108",
-    "generated": "1/8/2025 10:19:36 AM"
+    "end": "20991231",
+    "version": "20261102",
+    "generated": "11/2/2026 10:19:34 AM"
   },
   "RV": {
     "agency": "Delta Breeze",
@@ -171,8 +171,8 @@
     "agency": "SF Bay Ferry",
     "start": "20261001",
     "end": "20270228",
-    "version": "20261028",
-    "generated": "10/28/2026 4:35:57 PM"
+    "version": "20261102",
+    "generated": "11/2/2026 11:04:47 AM"
   },
   "SC": {
     "agency": "VTA",
@@ -227,8 +227,8 @@
     "agency": "Santa Rosa CityBus",
     "start": "20260929",
     "end": "20270213",
-    "version": "20261031",
-    "generated": "10/31/2026 10:14:33 AM"
+    "version": "20261102",
+    "generated": "11/2/2026 9:15:38 AM"
   },
   "SS": {
     "agency": "South City Shuttle",
@@ -239,10 +239,10 @@
   },
   "ST": {
     "agency": "SolTrans",
-    "start": "20260908",
+    "start": "20261031",
     "end": "20271231",
-    "version": "20261031",
-    "generated": "10/31/2026 10:38:51 AM"
+    "version": "20261101",
+    "generated": "11/1/2026 9:33:10 AM"
   },
   "TF": {
     "agency": "Treasure Island Ferry",
