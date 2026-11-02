@@ -8,7 +8,7 @@ was diagnosed, and how to explain any of it to another person.
 Upload this file into a Claude conversation and ask questions about anything in
 it. It is meant to be talked through, not just read.
 
-**Last updated:** 2026-10-26 · **Live:** https://bay-area-predictive-gps.onrender.com ·
+**Last updated:** 2026-11-02 · **Live:** https://bay-area-predictive-gps.onrender.com ·
 **Repo:** github.com/jayt431/bay-area-predictive-gps
 
 ---
@@ -176,6 +176,31 @@ backup that knocks on the same door; knocking twice can't send anything twice.
 that time is old, the outside scheduler has stopped.
 
 Set up and confirmed on 2026-10-26: ticks arrived at 10:10 and 10:20 PM.
+
+### Time to go
+The evening alert says what tomorrow looks like. The second notification
+arrives 10 to 20 minutes before you need to leave, for example:
+
+> **Work: leave in 14 min (8:41 AM)**
+> The N is running 4 min late. Take the N Judah from Church St (8:47 AM)…
+
+or, for a drive, "25 min drive, 6 min slower than usual."
+
+How: for every trip in the next three hours, the clock works out when you
+have to leave and re-checks every half hour, since traffic and delays shift.
+When that time is about 20 minutes away it plans once more with live data —
+live traffic, live train and bus positions — and sends one notification. If
+the clock somehow reaches it more than five minutes after you should have
+left, it stays quiet rather than nagging. It replaces the evening alert on
+your lock screen instead of piling up.
+
+Two things the first real test caught. Transit times came back with a time
+zone attached and the clock's didn't, and Python refuses to compare those —
+so the very first transit "leave now" crashed; now they're made the same.
+And the first message led with Muni's notice about the Valkyries parade on
+*Wednesday*, for a trip that afternoon. Service notices now stay in the full
+brief; the lock-screen line only carries what changes the next 20 minutes —
+a delay, a cancellation, a missed connection.
 
 ### Choosing how you travel
 A route card with Drive / Walk / Bike tabs, each showing its travel time. It is
@@ -347,9 +372,7 @@ turned on, and the test notification arrived through Apple's push service.
 (The desktop app's built-in browser couldn't test it — it can't run the
 service worker that receives pushes — so the phone was the real test.)
 
-What it doesn't do yet: a real "leave now" notification ("leave in 10
-minutes, BART is delayed"). The clock that makes it possible now exists —
-see "A clock that keeps time" below.
+It also tells you when to walk out the door — see "Time to go" below.
 
 ### Working on a phone
 The page had no phone layout at all: on a phone-sized screen the schedule
@@ -376,7 +399,7 @@ do. Picking now waits for the map.
 ### A test suite that runs on every push
 Almost every bug this project hit was found by a check run once by hand and
 then thrown away — so nothing stopped the same bug coming back. Those checks
-are now a permanent suite of 72 tests that runs in about three seconds, needs
+are now a permanent suite of 76 tests that runs in about three seconds, needs
 no keys and no internet, and runs automatically on GitHub on every push.
 
 Most tests are named after the bug they guard: "the summary comes from the

@@ -14,6 +14,7 @@ with no signup.
 
 from __future__ import annotations
 
+import copy
 import math
 import os
 from datetime import datetime, time, timedelta
@@ -23,6 +24,7 @@ import requests
 import events
 import mock_data
 import places
+import realtime
 import transit
 
 _DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/{}/{},{};{},{}"
@@ -103,8 +105,14 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
                                arrive_by=arrive_by, alternatives=False)
         if not planned["routes"]:
             return None
-        best = planned["routes"][0]
+        # Live delays and alerts when it leaves soon (annotate skips anything
+        # further out by itself). A copy: the planner caches its result.
+        best = realtime.annotate({"routes": [copy.deepcopy(planned["routes"][0])]})["routes"][0]
+        # The planner's times carry a UTC offset; everything here is naive
+        # Pacific, and Python won't compare the two. Both are Pacific wall time.
+        leave = datetime.fromisoformat(best["leave_at"]).replace(tzinfo=None) if best.get("leave_at") else None
         return {
+            "leave_by": leave.isoformat(timespec="minutes") if leave else None,
             "coords": [tuple(c) for seg in best["segments"] for c in seg["coords"]],
             # Street incidents can't delay a train underground or a ferry, so
             # only the walking, bus and streetcar parts are matched — each as
@@ -121,7 +129,7 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
         return None
     mode = normalize_mode(mode)
     arrival = None
-    if arrive_by and mode == "drive":
+    if arrive_by:
         try:
             arrival = datetime.fromisoformat(arrive_by)
         except ValueError:
@@ -148,12 +156,12 @@ def route(origin: tuple[float, float], destination: tuple[float, float],
             return None
         return best
 
-    if arrival:
+    if arrival and mode == "drive":
         best = directions(arrival - timedelta(minutes=30))
         if best:
             best = directions(arrival - timedelta(seconds=best["duration"])) or best
     else:
-        best = directions(None)
+        best = directions(None)            # walking and biking: no traffic to predict
     if not best:
         return None
     typical = best.get("duration_typical")
@@ -273,6 +281,7 @@ def build_context(trip: dict) -> dict | None:
         "traffic_delta_min": drawn.get("traffic_delta_min"),
         "typical_min": drawn.get("typical_min"),
         "leave_by_text": drawn.get("leave_by_text"),
+        "leave_by": drawn.get("leave_by"),
     }
 
 
@@ -354,6 +363,43 @@ def push_payload(trip: dict, alert: dict, context: dict) -> dict:
     return {"title": title[:80], "body": body[:240], "url": "/",
             # One notification per trip occurrence: a resend replaces it.
             "tag": f"trip-{trip.get('id')}-{trip.get('next_at')}", "risk": risk}
+
+
+def leave_now_payload(trip: dict, context: dict, alert: dict, now: datetime) -> dict:
+    """The "time to go" notification: how long until you need to leave, and
+    the one thing to know on the way out — what to board and how it's
+    running, or how traffic is. Same tag as the evening alert, so it replaces
+    that one on the lock screen instead of stacking."""
+    leave = datetime.fromisoformat(context["leave_by"])
+    minutes = round((leave - now).total_seconds() / 60)
+    when = "now" if minutes <= 1 else f"in {minutes} min"
+    label = trip.get("label") or "Your trip"
+    clock = leave.strftime("%I:%M %p").lstrip("0")
+    title = f"{label}: leave {when} ({clock})"
+
+    mode = normalize_mode(context.get("mode"))
+    plan = context.get("transit") or {}
+    parts = []
+    if mode == "transit":
+        # Delays, cancellations and missed connections change the next 20
+        # minutes; an agency's service notices ("parade on Wednesday") rarely
+        # do, so they stay in the full brief and out of a lock-screen line.
+        urgent = [l for l in plan.get("live") or [] if " alert: " not in l]
+        first_ride = next((s for s in plan.get("steps") or [] if s.startswith("Take")), None)
+        parts += urgent[:1] + ([first_ride] if first_ride else [])
+    else:
+        noun = {"drive": "drive", "walk": "walk", "bike": "ride"}[mode]
+        parts.append(f"{context.get('eta_min')} min {noun}")
+        traffic = traffic_phrase(context) if mode == "drive" else None
+        if traffic and traffic != "about usual for that time":
+            parts[-1] += f", {traffic}"
+    # Anything the brief rates as a real risk goes in too.
+    if (alert.get("risk") or "none") in ("medium", "high") and alert.get("headline"):
+        parts.append(alert["headline"])
+    body = ". ".join(p.rstrip(".") for p in parts if p) + "." if parts else "Your trip looks clear."
+    return {"title": title[:80], "body": body[:240], "url": "/",
+            "tag": f"trip-{trip.get('id')}-{trip.get('next_at')}",
+            "risk": (alert.get("risk") or "none").lower()}
 
 
 def format_email(trip: dict, alert: dict, context: dict) -> tuple[str, str]:

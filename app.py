@@ -836,6 +836,16 @@ def _alert_trip(trip: dict, email: str | None, dry_run: bool = False) -> dict:
 
 SYNC_EVERY = timedelta(hours=6)          # re-read the connected calendar
 RETRY_EVERY = timedelta(hours=1)         # an alert that failed to deliver
+
+# "Time to go": a push 10–20 minutes before you need to leave. With a tick
+# every 10 minutes, a 20-minute lead always lands in that range. Trips in the
+# next few hours are re-planned every half hour (traffic, delays), so the
+# leave-by time is current when the window opens; at send time it is planned
+# once more with live data.
+LEAVE_LEAD = timedelta(minutes=20)
+LEAVE_LOOKAHEAD_H = 3
+REPLAN_EVERY = timedelta(minutes=30)
+TOO_LATE = timedelta(minutes=5)          # past this, a "leave now" is noise
 LAST_TICK_KEY = "last_tick"
 SYNC_TRIED_KEY = "calendar_auto_sync_at"
 
@@ -882,8 +892,44 @@ def tick():
         outcome = _alert_trip(trip, email)
         result["sent" if (outcome.get("delivery") or {}).get("sent") else "failed"] += 1
 
+    result["leave_now"] = _leave_now(now) if push.configured() else 0
     store.set_setting(LAST_TICK_KEY, json.dumps(result))
     return jsonify(result)
+
+
+def _leave_now(now: datetime) -> int:
+    """Send "time to go" for every trip whose leave-by time is close. Returns
+    how many went out. Each occurrence gets at most one."""
+    sent = 0
+    for trip in scheduler.upcoming(within_hours=LEAVE_LOOKAHEAD_H, now=now):
+        occurrence = f"{trip['id']}:{trip['next_at']}"
+        if store.get_setting(f"leavenow:{occurrence}"):
+            continue
+        plan_key = f"leave_plan:{occurrence}"
+        try:
+            plan = json.loads(store.get_setting(plan_key) or "null") or {}
+        except ValueError:
+            plan = {}
+        leave = _when(plan.get("leave_by"))
+        planned_at = _when(plan.get("at"))
+        due = leave is not None and now >= leave - LEAVE_LEAD
+        if not due and planned_at and now - planned_at < REPLAN_EVERY:
+            continue
+        # Plan (or re-plan with what's happening now).
+        context = alerts.build_context(trip)
+        leave = _when((context or {}).get("leave_by"))
+        store.set_setting(plan_key, json.dumps({"leave_by": leave and leave.isoformat(timespec="minutes"),
+                                                "at": now.isoformat(timespec="minutes")}))
+        if not leave or now < leave - LEAVE_LEAD:
+            continue
+        if now > leave + TOO_LATE:
+            store.set_setting(f"leavenow:{occurrence}", "too late")
+            continue
+        alert = compute_brief(context).get("alert") or {}
+        if push.send(alerts.leave_now_payload(trip, context, alert, now)).get("sent"):
+            store.set_setting(f"leavenow:{occurrence}", now.isoformat(timespec="minutes"))
+            sent += 1
+    return sent
 
 
 @app.route("/map-test")

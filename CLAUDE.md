@@ -288,6 +288,24 @@ site — and the same counts are saved as `last_tick`, shown in `/api/health`.
 The ticks also keep the free Render instance (750 h/month per account; this
 uses ~744) and Supabase (pauses after 7 quiet days) awake.
 
+**"Time to go"** (`_leave_now` in `app.py`, `alerts.leave_now_payload`): each
+tick also looks at trips in the next `LEAVE_LOOKAHEAD_H` (3) hours, plans each
+(`build_context`) and stores its leave-by under `leave_plan:<id>:<next_at>`,
+re-planning every `REPLAN_EVERY` (30 min). Once now is within `LEAVE_LEAD`
+(20 min) of leave-by it plans again with live data and pushes once
+(`leavenow:` marker) — with 10-minute ticks that lands 10–20 min before
+leaving. Past leave-by + `TOO_LATE` (5 min) it is skipped, not sent late. Push
+only, no email. The message: "Work: leave in 14 min (8:41 AM)" + for transit
+the first live delay/cancellation (agency service notices are left out — one
+about Wednesday's parade led the first real test) and the first ride; for
+drive/walk/bike the trip time and, driving, traffic against usual; plus the
+brief's headline at medium/high risk. Same tag as the evening alert, so it
+replaces it on the lock screen. Every mode now has `leave_by` (ISO, naive
+Pacific): walking/biking subtract their duration; transit's planner times
+carry a UTC offset and are made naive, or comparing them with the clock
+raises. `alerts.route` also annotates transit with live data
+(`realtime.annotate`, a deep copy) — it skips trips over 90 min out itself.
+
 `gunicorn.conf.py` (read by gunicorn from the working directory, whatever
 Render's start command is) sets `threads = 4` and `timeout = 120`: with one
 sync worker and a 30 s timeout, a slow tick froze every other request and was
