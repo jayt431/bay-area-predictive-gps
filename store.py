@@ -62,6 +62,38 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 
+# One row per trip occurrence: what the app forecast (from the alert that was
+# actually delivered), what it measured at departure, and what you said
+# afterwards. This is the evidence for whether the forecasts are any good.
+# Rows outlive the trip they describe — deleting a trip keeps its history.
+_PREDICTIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS predictions (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL,
+    trip_id       TEXT NOT NULL,
+    label         TEXT,
+    occurrence    TEXT NOT NULL,
+    mode          TEXT,
+    made_at       TEXT NOT NULL,
+    risk          TEXT,
+    headline      TEXT,
+    predicted_min INTEGER,
+    leave_by      TEXT,
+    forecast      TEXT,
+    leave_now_at  TEXT,
+    actual_min    INTEGER,
+    actual        TEXT,
+    checked_at    TEXT,
+    verdict       TEXT,
+    changed_plans INTEGER,
+    rated_at      TEXT
+)
+"""
+_PREDICTION_FIELDS = ("id", "user_id", "trip_id", "label", "occurrence", "mode", "made_at", "risk",
+                      "headline", "predicted_min", "leave_by", "forecast", "leave_now_at",
+                      "actual_min", "actual", "checked_at", "verdict", "changed_plans", "rated_at")
+
+
 def using_postgres() -> bool:
     return bool(DB_URL)
 
@@ -150,6 +182,7 @@ def init_db() -> None:
         cur = conn.cursor()
         cur.execute(_SCHEMA)
         cur.execute(_SETTINGS_SCHEMA)
+        cur.execute(_PREDICTIONS_SCHEMA)
         conn.commit()
         _widen_coordinate_columns(cur, conn)
         _add_mode_column(cur, conn)
@@ -307,3 +340,52 @@ def set_setting(key: str, value: str | None, user_id: str = LOCAL_USER) -> None:
             cur.execute(_q("INSERT INTO settings (user_id, key, value) VALUES (?, ?, ?)"),
                         (user_id, key, value))
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Predictions
+# ---------------------------------------------------------------------------
+
+def get_prediction(prediction_id: str, user_id: str = LOCAL_USER) -> dict | None:
+    with connection() as conn:
+        cur = conn.cursor()
+        cur.execute(_q(f"SELECT {', '.join(_PREDICTION_FIELDS)} FROM predictions "
+                       "WHERE id = ? AND user_id = ?"), (prediction_id, user_id))
+        row = cur.fetchone()
+        return dict(zip(_PREDICTION_FIELDS, row)) if row else None
+
+
+def add_prediction(row: dict, user_id: str = LOCAL_USER) -> bool:
+    """Record a forecast. The first one for an occurrence is kept — that's the
+    forecast being judged — so a later call for the same id does nothing."""
+    if get_prediction(row["id"], user_id):
+        return False
+    row = {**row, "user_id": user_id}
+    cols = [f for f in _PREDICTION_FIELDS if f in row]
+    with connection() as conn:
+        cur = conn.cursor()
+        cur.execute(_q(f"INSERT INTO predictions ({', '.join(cols)}) "
+                       f"VALUES ({', '.join('?' for _ in cols)})"), [row[c] for c in cols])
+        conn.commit()
+    return True
+
+
+def update_prediction(prediction_id: str, fields: dict, user_id: str = LOCAL_USER) -> bool:
+    fields = {k: v for k, v in fields.items() if k in _PREDICTION_FIELDS and k not in ("id", "user_id")}
+    if not fields:
+        return False
+    with connection() as conn:
+        cur = conn.cursor()
+        cur.execute(_q(f"UPDATE predictions SET {', '.join(f'{k} = ?' for k in fields)} "
+                       "WHERE id = ? AND user_id = ?"), [*fields.values(), prediction_id, user_id])
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def list_predictions(since: str, user_id: str = LOCAL_USER) -> list[dict]:
+    """Occurrences on or after `since` (ISO), newest first."""
+    with connection() as conn:
+        cur = conn.cursor()
+        cur.execute(_q(f"SELECT {', '.join(_PREDICTION_FIELDS)} FROM predictions "
+                       "WHERE user_id = ? AND occurrence >= ? ORDER BY occurrence DESC"), (user_id, since))
+        return [dict(zip(_PREDICTION_FIELDS, row)) for row in cur.fetchall()]

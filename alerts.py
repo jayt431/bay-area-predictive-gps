@@ -282,7 +282,16 @@ def build_context(trip: dict) -> dict | None:
         "typical_min": drawn.get("typical_min"),
         "leave_by_text": drawn.get("leave_by_text"),
         "leave_by": drawn.get("leave_by"),
+        "live_delay_min": live_delay_min(drawn.get("transit")),
     }
+
+
+def live_delay_min(plan: dict | None) -> int | None:
+    """The worst live delay on any ride of a transit plan, in whole minutes
+    (0 when running early or on time), or None without live data."""
+    delays = [seg["live"]["delay_s"] for seg in (plan or {}).get("segments") or []
+              if seg.get("kind") == "transit" and (seg.get("live") or {}).get("delay_s") is not None]
+    return max(0, round(max(delays) / 60)) if delays else None
 
 
 def traffic_phrase(ctx: dict) -> str | None:

@@ -663,6 +663,44 @@ def sync_calendar_now():
     return jsonify(result), (200 if result.get("ok") else 400)
 
 
+@app.route("/api/predictions")
+@requires_passcode
+def get_predictions():
+    """Forecasts from the last `days` (default 30), newest first, with a scorecard."""
+    days = min(request.args.get("days", 30, type=int), 365)
+    since = (scheduler.local_now() - timedelta(days=days)).isoformat(timespec="minutes")
+    rows = store.list_predictions(since)
+    for r in rows:
+        for key in ("forecast", "actual"):
+            try:
+                r[key] = json.loads(r[key]) if r.get(key) else None
+            except ValueError:
+                r[key] = None
+        r["changed_plans"] = bool(r.get("changed_plans"))
+    return jsonify({"items": rows, "score": _scorecard(rows), "days": days})
+
+
+@app.route("/api/predictions/<path:prediction_id>", methods=["POST"])
+@requires_passcode
+def rate_prediction(prediction_id):
+    """Your verdict on one trip: `verdict` (as_predicted / worse / better, or
+    null to clear) and/or `changed_plans` (true/false)."""
+    body = request.get_json(silent=True) or {}
+    fields = {}
+    if "verdict" in body:
+        if body["verdict"] not in (*VERDICTS, None):
+            return jsonify({"error": f"verdict must be one of {', '.join(VERDICTS)}"}), 400
+        fields["verdict"] = body["verdict"]
+    if "changed_plans" in body:
+        fields["changed_plans"] = 1 if body["changed_plans"] else 0
+    if not fields:
+        return jsonify({"error": "nothing to update"}), 400
+    fields["rated_at"] = scheduler.local_now().isoformat(timespec="minutes")
+    if not store.update_prediction(prediction_id, fields):
+        return jsonify({"error": "no such trip"}), 404
+    return jsonify({"ok": True})
+
+
 @app.route("/api/schedule/settings", methods=["POST"])
 @requires_passcode
 def schedule_settings():
@@ -817,6 +855,7 @@ def _alert_trip(trip: dict, email: str | None, dry_run: bool = False) -> dict:
             or "no channel set up: turn on notifications or add an alert email")
     else:
         store.set_setting(_alert_marker(trip), datetime.utcnow().isoformat(timespec="seconds"))
+        _record_forecast(trip, context, alert)
     return outcome
 
 
@@ -893,6 +932,7 @@ def tick():
         result["sent" if (outcome.get("delivery") or {}).get("sent") else "failed"] += 1
 
     result["leave_now"] = _leave_now(now) if push.configured() else 0
+    result["measured"] = _check_outcomes(now)
     store.set_setting(LAST_TICK_KEY, json.dumps(result))
     return jsonify(result)
 
@@ -928,8 +968,92 @@ def _leave_now(now: datetime) -> int:
         alert = compute_brief(context).get("alert") or {}
         if push.send(alerts.leave_now_payload(trip, context, alert, now)).get("sent"):
             store.set_setting(f"leavenow:{occurrence}", now.isoformat(timespec="minutes"))
+            _record_forecast(trip, context, alert)            # if no evening alert went out
+            store.update_prediction(occurrence, {"leave_now_at": now.isoformat(timespec="minutes")})
             sent += 1
     return sent
+
+
+# ---------------------------------------------------------------------------
+# The prediction log
+#
+# Whether the forecasts are any good, kept as evidence rather than a feeling.
+# Each delivered alert records what it forecast. At departure, the clock plans
+# the trip again with what's actually happening and stores that. Afterwards
+# you say how it went and whether the alert changed your plans — the number
+# that decides whether this app is worth building further.
+#
+# "Actual" is measured at departure from the same sources (live traffic, live
+# transit), not from a phone's GPS; it is what the road and the trains were
+# doing when you left, which is what the forecast was trying to predict.
+# ---------------------------------------------------------------------------
+
+CHECK_WINDOW = timedelta(hours=1)        # measure departures up to an hour late
+VERDICTS = ("as_predicted", "worse", "better")
+
+
+def _on_route(context: dict) -> list[str]:
+    """Names of what counted against the trip (the same rule as the brief)."""
+    return [d["name"] for d in context.get("disruptions") or []
+            if d.get("severity") == "red" or d.get("type") == "event"][:5]
+
+
+def _conditions(context: dict) -> dict:
+    plan = context.get("transit") or {}
+    return {"traffic_delta_min": context.get("traffic_delta_min"),
+            "live_delay_min": context.get("live_delay_min"),
+            "on_route": _on_route(context),
+            "live": (plan.get("live") or [])[:3]}
+
+
+def _record_forecast(trip: dict, context: dict, alert: dict) -> None:
+    store.add_prediction({
+        "id": f"{trip['id']}:{trip['next_at']}",
+        "trip_id": str(trip["id"]), "label": trip.get("label"), "occurrence": trip["next_at"],
+        "mode": context.get("mode"), "made_at": scheduler.local_now().isoformat(timespec="minutes"),
+        "risk": alert.get("risk"), "headline": alert.get("headline"),
+        "predicted_min": context.get("eta_min"), "leave_by": context.get("leave_by"),
+        "forecast": json.dumps(_conditions(context)),
+    })
+
+
+def _check_outcomes(now: datetime) -> int:
+    """At (or just after) each forecast trip's departure, measure what's
+    actually happening. Returns how many were measured."""
+    checked = 0
+    for trip in scheduler.upcoming(within_hours=LEAVE_LOOKAHEAD_H, now=now):
+        row = store.get_prediction(f"{trip['id']}:{trip['next_at']}")
+        leave = _when((row or {}).get("leave_by"))
+        if not row or row.get("checked_at") or not leave or not (leave <= now <= leave + CHECK_WINDOW):
+            continue
+        context = alerts.build_context(trip)
+        if not context:
+            continue
+        actual = context.get("eta_min")
+        if context.get("live_delay_min"):                 # transit: the timetable plus the delay
+            actual += context["live_delay_min"]
+        store.update_prediction(row["id"], {"actual_min": actual, "actual": json.dumps(_conditions(context)),
+                                            "checked_at": now.isoformat(timespec="minutes")})
+        checked += 1
+    return checked
+
+
+def _scorecard(rows: list[dict]) -> dict:
+    timed = [r for r in rows if r.get("predicted_min") is not None and r.get("actual_min") is not None]
+    rated = [r for r in rows if r.get("verdict")]
+    warned = [r for r in rows if (r.get("risk") or "none") in ("low", "medium", "high")]
+    return {
+        "trips": len(rows),
+        "measured": len(timed),
+        # Forecast travel time within 5 minutes of what it was at departure.
+        "time_within_5": sum(1 for r in timed if abs(r["actual_min"] - r["predicted_min"]) <= 5),
+        "rated": len(rated),
+        "as_predicted": sum(1 for r in rated if r["verdict"] == "as_predicted"),
+        # A warning you rated "better" than forecast was a false alarm.
+        "warnings": len(warned),
+        "false_alarms": sum(1 for r in warned if r.get("verdict") == "better"),
+        "changed_plans": sum(1 for r in rows if r.get("changed_plans")),
+    }
 
 
 @app.route("/map-test")

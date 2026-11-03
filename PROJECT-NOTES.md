@@ -202,6 +202,31 @@ And the first message led with Muni's notice about the Valkyries parade on
 brief; the lock-screen line only carries what changes the next 20 minutes —
 a delay, a cancellation, a missed connection.
 
+
+### Keeping score
+The honest question about this app is whether its forecasts are any good, and
+whether they ever change what you do. Until now there was no way to answer
+that except by feel. The prediction log answers it with evidence.
+
+Every alert that reaches your phone records what it forecast: the risk, the
+headline, how long the trip should take, and when to leave. At the moment
+you're due to leave, the clock plans the trip once more with what's actually
+happening — live traffic, live train delays — and records that. Then the
+Schedule panel's **How did we do?** list shows each trip side by side
+("Forecast: low risk · 25 min — At departure: 31 min, traffic 7 min slower")
+with three buttons, *As predicted*, *Worse*, *Better*, and a *Changed my
+plans* checkbox.
+
+The scorecard on top counts four things: how often the travel time was right
+within five minutes, how many warnings were sent, how many of those you rated
+"better" (false alarms — the thing the 1:20 AM sushi trip was), and how many
+times an alert changed your plans. That last number is the one that decides
+whether to keep going: the plan is three weeks of daily use, and if alerts
+changed your plans five or more times, the problem is real.
+
+A note on "actual": it's what the roads and trains were doing when you left,
+measured by the same sources, not a GPS trace of your trip. It measures the
+forecast, not your driving.
 ### Choosing how you travel
 A route card with Drive / Walk / Bike tabs, each showing its travel time. It is
 more than a different line on the map, because the mode changes what matters:
@@ -399,7 +424,7 @@ do. Picking now waits for the map.
 ### A test suite that runs on every push
 Almost every bug this project hit was found by a check run once by hand and
 then thrown away — so nothing stopped the same bug coming back. Those checks
-are now a permanent suite of 76 tests that runs in about three seconds, needs
+are now a permanent suite of 83 tests that runs in about three seconds, needs
 no keys and no internet, and runs automatically on GitHub on every push.
 
 Most tests are named after the bug they guard: "the summary comes from the

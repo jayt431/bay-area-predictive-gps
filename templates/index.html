@@ -375,6 +375,21 @@
       font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
       padding: 7px 12px; cursor: pointer; white-space: nowrap; }
     .conn-btn:hover { border-color: var(--accent); }
+    /* The prediction log */
+    .log-score { font-size: 12px; color: var(--ink); margin: 8px 0 4px; line-height: 1.5; }
+    .log-score b { color: var(--accent); font-weight: 600; }
+    .log-item { padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.05); }
+    .log-item:first-child { border-top: none; }
+    .log-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--ink); }
+    .log-top .when { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .log-line { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+    .log-line .off { color: var(--yellow); }
+    .log-rate { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; align-items: center; }
+    .log-rate button { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 7px;
+      font-size: 11px; padding: 4px 9px; cursor: pointer; }
+    .log-rate button.on { border-color: var(--accent); color: var(--accent); }
+    .log-rate label { font-size: 11px; color: var(--muted); display: flex; gap: 5px; align-items: center;
+      margin-left: auto; cursor: pointer; }
     .feed-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
     .feed-place { font-size: 14px; font-weight: 600; color: var(--ink); margin-top: 3px; }
     .feed-item { display: flex; gap: 11px; padding: 11px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
@@ -653,6 +668,12 @@
           </div>
           <div class="sc-note" id="sched-add-note"></div>
         </div>
+      </div>
+
+      <div class="sc-sec" id="log-sec" hidden>
+        <span class="mono-label">How did we do?</span>
+        <div class="log-score" id="log-score"></div>
+        <div id="log-list"></div>
       </div>
 
       <div class="sc-sec">
@@ -2853,6 +2874,72 @@
       await refreshSchedule();
     }
 
+    // ---- The prediction log: what each alert forecast, what was actually
+    // happening at departure, and your verdict. The scorecard is the 3-week
+    // test: how often an alert changed your plans, and how often it was right.
+    let predictionLog = [];
+
+    async function loadPredictionLog() {
+      let data;
+      try {
+        const res = await schedFetch("/api/predictions");
+        if (!res.ok) return;
+        data = await res.json();
+      } catch { return; }
+      predictionLog = data.items || [];
+      document.getElementById("log-sec").hidden = !predictionLog.length;
+      const s = data.score || {};
+      const parts = [`<b>${s.trips}</b> trip${s.trips === 1 ? "" : "s"} forecast in ${data.days} days`];
+      if (s.measured) parts.push(`travel time right within 5 min <b>${s.time_within_5} of ${s.measured}</b>`);
+      if (s.warnings) parts.push(`warnings <b>${s.warnings}</b>, false alarms <b>${s.false_alarms}</b>`);
+      parts.push(`changed your plans <b>${s.changed_plans}</b> time${s.changed_plans === 1 ? "" : "s"}`);
+      document.getElementById("log-score").innerHTML = parts.join(" · ");
+      renderPredictionLog();
+    }
+
+    const RISK_WORD = { none: "No risk", low: "Low risk", medium: "Medium risk", high: "High risk" };
+
+    function renderPredictionLog() {
+      const now = new Date();
+      const verdicts = [["as_predicted", "As predicted"], ["worse", "Worse"], ["better", "Better"]];
+      // Trips that have happened (or at least departed) are the ones to judge.
+      const done = predictionLog.filter(p => p.checked_at || new Date(p.occurrence) <= now).slice(0, 10);
+      document.getElementById("log-list").innerHTML = done.length ? done.map(p => {
+        const when = new Date(p.occurrence);
+        const day = `${when.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}, ${
+          when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+        const forecast = `${RISK_WORD[p.risk] || "Forecast"}${p.predicted_min != null ? ` · ${p.predicted_min} min` : ""}`;
+        let actual = "Not measured at departure";
+        if (p.actual_min != null) {
+          const off = p.predicted_min != null && Math.abs(p.actual_min - p.predicted_min) > 5;
+          const a = p.actual || {};
+          const why = a.traffic_delta_min >= 3 ? ` · traffic ${a.traffic_delta_min} min slower than usual`
+            : a.live_delay_min ? ` · ${a.live_delay_min} min transit delay`
+            : (a.on_route || []).length ? ` · ${escapeHtml(a.on_route[0])}` : "";
+          actual = `At departure: <span class="${off ? "off" : ""}">${p.actual_min} min</span>${why}`;
+        }
+        const id = escapeHtml(p.id);
+        return `<div class="log-item">
+          <div class="log-top"><span>${escapeHtml(p.label || "Trip")}</span><span class="when">${day}</span></div>
+          <div class="log-line">Forecast: ${forecast}${p.headline && p.risk !== "none" ? ` — ${escapeHtml(p.headline)}` : ""}</div>
+          <div class="log-line">${actual}</div>
+          <div class="log-rate">
+            ${verdicts.map(([v, label]) => `<button class="${p.verdict === v ? "on" : ""}"
+                onclick="ratePrediction('${id}', { verdict: ${p.verdict === v ? "null" : `'${v}'`} })">${label}</button>`).join("")}
+            <label><input type="checkbox" ${p.changed_plans ? "checked" : ""}
+                onchange="ratePrediction('${id}', { changed_plans: this.checked })"> Changed my plans</label>
+          </div>
+        </div>`;
+      }).join("") : '<div class="sc-note">Forecasts appear here once a trip has happened.</div>';
+    }
+
+    async function ratePrediction(id, change) {
+      const res = await schedFetch(`/api/predictions/${encodeURIComponent(id)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change),
+      });
+      if (res.ok) loadPredictionLog();
+    }
+
     async function refreshSchedule() {
       let data;
       try {
@@ -2876,6 +2963,7 @@
       else document.getElementById("cal-actions").hidden = true;
       if (data.alert_email) document.getElementById("sched-email").value = data.alert_email;
       updatePushUI();
+      loadPredictionLog();
     }
 
     function toggleCalForm() {

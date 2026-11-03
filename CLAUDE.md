@@ -133,6 +133,8 @@ Endpoints:
 | `POST /api/schedule/settings` | Set the alert email |
 | `POST /api/schedule/unlock` | Validate a passcode without changing anything |
 | `POST /api/schedule/test-email` | Send one fixed email to the alert address and return Resend's exact result |
+| `GET /api/predictions?days=30` | The prediction log: each forecast, what was measured at departure, your verdict, and a scorecard (gated) |
+| `POST /api/predictions/<id>` | Rate one trip: `verdict` (as_predicted / worse / better / null) and/or `changed_plans` (gated) |
 | `POST /api/tick` | The clock, called every 10 min by cron-job.org: re-sync the calendar every 6 h, send each alert when due. Counts only in the reply |
 | `POST /api/alerts/run` | Brief every trip within `within_hours` (default 24) now, ignoring due times — for manual runs. `?dry_run=1` returns the emails instead of sending |
 | `POST /api/brief` | Pre-trip alert. Claude when `ANTHROPIC_API_KEY` set, else rule-based `_fallback_brief` |
@@ -215,7 +217,8 @@ predicted:
 
 **The schedule is gated, the map is not.** The map is a public demo; the
 schedule is personal — where you go and when. So `requires_passcode` sits on
-the seven `/api/schedule*` endpoints and `/api/places` only, and `/`, `/api/config`,
+the `/api/schedule*` endpoints, `/api/places`, `/api/push/*` writes and
+`/api/predictions*` only, and `/`, `/api/config`,
 `/api/disruptions` and the rest stay open.
 
 One shared passcode, no accounts: there is one user, and a login system would
@@ -305,6 +308,21 @@ Pacific): walking/biking subtract their duration; transit's planner times
 carry a UTC offset and are made naive, or comparing them with the clock
 raises. `alerts.route` also annotates transit with live data
 (`realtime.annotate`, a deep copy) — it skips trips over 90 min out itself.
+
+**The prediction log** (`predictions` table in `store.py`; `_record_forecast`,
+`_check_outcomes`, `_scorecard` in `app.py`): one row per occurrence, id
+`<trip id>:<next_at>`. The **first delivered** alert's forecast is kept (risk,
+headline, `predicted_min` = ETA, `leave_by`, conditions JSON); a later
+"time to go" only stamps `leave_now_at`. Between leave-by and an hour after
+(`CHECK_WINDOW`), a tick re-plans the trip once and stores `actual_min` —
+the live ETA at departure, plus the worst live ride delay for transit
+(`alerts.live_delay_min`) — and the conditions then. That's what the road and
+trains were doing when you left, not phone GPS. The Schedule panel's "How
+did we do?" lists past trips with forecast vs departure and lets you rate
+each (As predicted / Worse / Better, "Changed my plans"). Scorecard: travel
+time within 5 min, warnings (risk ≥ low) and false alarms (warnings rated
+"better"), and `changed_plans` — the number for the 3-week "is this worth
+building" test. Rows outlive deleted trips.
 
 `gunicorn.conf.py` (read by gunicorn from the working directory, whatever
 Render's start command is) sets `threads = 4` and `timeout = 120`: with one
