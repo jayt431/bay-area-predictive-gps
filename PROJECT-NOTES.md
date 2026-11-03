@@ -203,6 +203,23 @@ brief; the lock-screen line only carries what changes the next 20 minutes —
 a delay, a cancellation, a missed connection.
 
 
+### Which lane to be in
+In navigation, a card now slides in over the map before each turn: the lanes
+drawn as road markings, the ones you can use lit up, and a plain line such as
+"Use the left 3 lanes of 4". Merges, ramps, exits and forks get a tag
+(MERGE, EXIT, FORK…) and a card even where there's no lane data, so a freeway
+split never comes as a surprise. During the simulated drive it counts down
+("In 0.3 mi"); stepping through the directions, it shows the lanes for the
+turn on screen.
+
+The lane data comes from Mapbox, which knows the lane layout of most major
+streets and freeways — on one Alameda → Golden Gate drive, 16 of 20
+maneuvers had it. One detail made the design: Mapbox attaches a turn's lane
+layout to the stretch of road *before* the turn, which is exactly when a
+driver needs it. The first version drew each arrow by rotating a straight
+one, which pushed left and right turns off the edge of their box; they are
+now drawn as proper turn markings.
+
 ### Keeping score
 The honest question about this app is whether its forecasts are any good, and
 whether they ever change what you do. Until now there was no way to answer

@@ -476,6 +476,28 @@
       font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
       color: var(--muted); background: var(--panel); border: 1px solid var(--line); padding: 6px 14px; border-radius: 20px; display: none; }
     body.trip-mode .sim-tag { display: block; }
+    /* Lane guidance: slides in over the map before a turn, merge, ramp or fork.
+       Centered on the visible map (the trip panel takes the left 380px). */
+    #lane-card { position: absolute; z-index: 5; top: 20px; left: calc(50% + 190px); min-width: 210px; max-width: 340px;
+      padding: 10px 14px 12px; border-radius: 14px; pointer-events: none; opacity: 0;
+      transform: translate(-50%, -10px); transition: opacity .25s ease, transform .25s ease; display: none; }
+    body.trip-mode #lane-card { display: block; }
+    #lane-card.show { opacity: 1; transform: translate(-50%, 0); }
+    .lane-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--ink); line-height: 1.35; }
+    .lane-head .in { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; }
+    .lane-tag { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; color: #05221e; background: var(--yellow);
+      border-radius: 4px; padding: 1px 5px; margin-right: 2px; }
+    .lanes { display: flex; justify-content: center; margin: 9px 0 6px; }
+    .lane { width: 36px; height: 42px; display: flex; align-items: center; justify-content: center;
+      background: rgba(255,255,255,0.03); }
+    .lane + .lane { border-left: 2px dashed rgba(255,255,255,0.18); }
+    .lane:first-child { border-radius: 7px 0 0 7px; } .lane:last-child { border-radius: 0 7px 7px 0; }
+    .lane.ok { background: rgba(0,229,199,0.16); }
+    .lane svg { width: 26px; height: 30px; fill: none; stroke: rgba(255,255,255,0.25); stroke-width: 2.6;
+      stroke-linecap: round; stroke-linejoin: round; }
+    .lane svg .on { stroke: var(--accent); }
+    .lane-say { text-align: center; font-size: 12px; color: var(--muted); }
+    .lane-say b { color: var(--ink); font-weight: 600; }
     #recenter-btn { position: absolute; z-index: 5; right: 20px; bottom: 60px; display: none;
       align-items: center; gap: 8px; padding: 10px 16px; border-radius: 22px; cursor: pointer;
       background: var(--accent); color: #05221e; border: none; font-family: var(--sans); font-size: 14px; font-weight: 700; }
@@ -497,6 +519,8 @@
     @media (max-width: 640px) {
       #search-panel { left: 8px; right: 8px; bottom: 8px; width: auto; padding: 14px; box-sizing: border-box; }
       body.has-route #search-panel { display: none; }
+      /* The trip panel is a top sheet on a phone: lanes sit low, above the sim tag. */
+      #lane-card { top: auto; bottom: 64px; left: 50%; max-width: calc(100vw - 32px); }
       /* Adding a stop swaps the route sheet for the search sheet, and back. */
       body.has-route.adding-stop #search-panel { display: block; }
       body.adding-stop #route-summary { display: none !important; }
@@ -594,6 +618,7 @@
     <div id="trip-body"></div>
   </div>
   <div class="sim-tag" id="sim-tag">◉ Simulating drive</div>
+  <div id="lane-card" class="glass" aria-live="polite"></div>
   <button id="recenter-btn" onclick="recenter()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path>
@@ -1605,7 +1630,9 @@
       // which knows their timetables.
       const url = `https://api.mapbox.com/directions/v5/mapbox/${profile}/`
         + [origin, ...points].map(p => `${p.lon},${p.lat}`).join(";")
-        + `?geometries=geojson&overview=full&steps=true&exclude=ferry&access_token=${TOKEN}`;
+        + `?geometries=geojson&overview=full&steps=true&exclude=ferry&access_token=${TOKEN}`
+        // Banner instructions carry the lane guidance (which lanes, which way).
+        + (profile.startsWith("driving") ? "&banner_instructions=true" : "");
       const get = async (departAt) => {
         // depart_at must be in the future; for anything else, ask about now.
         const extra = departAt && departAt > new Date(Date.now() + 60000) ? `&depart_at=${localIso(departAt)}` : "";
@@ -2156,6 +2183,7 @@
 
     function endTrip() {
       stopDrive();
+      showLanes(-1, null);
       setFollowing(true);
       document.body.classList.remove("trip-mode");
       map.getSource("nav").setData(emptyFC());
@@ -2177,6 +2205,7 @@
       if (near) sub += ` · <span class="${near.severity === 'red' ? 'danger' : 'warn'}">⚠ ${near.name} ahead</span>`;
       document.getElementById("nav-sub").innerHTML = sub;
 
+      if (!driving) showLanes(i, null);
       document.getElementById("nav-prev").disabled = i === 0;
       document.getElementById("nav-next").disabled = i === tripSteps.length - 1;
 
@@ -2291,11 +2320,88 @@
       let i = 0;
       for (let k = 0; k < stepCumKm.length; k++) { if (stepCumKm[k] <= km + 0.0001) i = k; }
       if (i !== stepIndex) updateStepBanner(i);
+      const next = i + 1;
+      showLanes(next, next < stepCumKm.length ? stepCumKm[next] - km : null, true);
     }
 
     function cycleSpeed() {
       speedMult = speedMult === 3 ? 1 : speedMult + 1;
       document.getElementById("nav-speed").textContent = `${speedMult}×`;
+    }
+
+    // ---- Lane guidance ----
+    // Mapbox attaches lane data to the banner of the step *before* a turn —
+    // the stretch you drive while approaching it: one entry per lane, left to
+    // right, with the directions painted on it and whether it's a lane you can
+    // take for this route. Merges, ramps and forks get a heads-up even where
+    // there's no lane data.
+    const MANEUVER_TAG = { merge: "MERGE", "on ramp": "RAMP", "off ramp": "EXIT", fork: "FORK" };
+    // Road-marking arrows, drawn in a 28×32 box: a stem from the bottom, then
+    // the turn. Rotating one straight arrow ran the turns off the edge.
+    const LANE_ARROW = {
+      straight:       ["M14 29 V7", "M8 13 L14 7 L20 13"],
+      left:           ["M17 29 V17 Q17 11 11 11 H5", "M9 7 L5 11 L9 15"],
+      right:          ["M11 29 V17 Q11 11 17 11 H23", "M19 7 L23 11 L19 15"],
+      "slight left":  ["M16 29 V18 L8 9", "M8 15 V9 H14"],
+      "slight right": ["M12 29 V18 L20 9", "M20 15 V9 H14"],
+      "sharp left":   ["M18 29 V14 Q18 9 13 11 L6 18", "M6 12 V18 H12"],
+      "sharp right":  ["M10 29 V14 Q10 9 15 11 L22 18", "M22 12 V18 H16"],
+      uturn:          ["M18 29 V13 A5 5 0 0 0 8 13 V22", "M4 18 L8 22 L12 18"],
+    };
+    let laneKey = "";
+
+    function laneGuidance(i) {
+      const step = tripSteps[i], prev = tripSteps[i - 1];
+      if (!step || !prev || travelMode !== "drive") return null;
+      const banner = (prev.bannerInstructions || []).find(b =>
+        b.sub && (b.sub.components || []).some(c => c.type === "lane"));
+      let lanes = banner ? banner.sub.components.filter(c => c.type === "lane") : null;
+      // Every lane works, or none is marked: there's nothing to tell the driver.
+      if (lanes && (lanes.every(l => l.active) || !lanes.some(l => l.active))) lanes = null;
+      const tag = MANEUVER_TAG[step.maneuver.type] || null;
+      if (!lanes && !tag) return null;
+      // Show from where Mapbox's banner starts, at least ~0.3 mi out on a quick
+      // street; a merge with no banner gets half a kilometre.
+      return { lanes, tag, fromKm: Math.max((banner ? banner.distanceAlongGeometry : 500) / 1000, 0.5) };
+    }
+
+    function laneSvg(lane) {
+      const lit = d => lane.active && (!lane.active_direction || d === lane.active_direction);
+      // Unlit arrows first so the lit one is drawn on top.
+      const dirs = [...lane.directions].sort((a, b) => lit(a) - lit(b));
+      const paths = dirs.map(d => `<path class="${lit(d) ? "on" : ""}" d="${(LANE_ARROW[d] || LANE_ARROW.straight).join(" ")}"/>`);
+      return `<div class="lane${lane.active ? " ok" : ""}"><svg viewBox="0 0 28 32">${paths.join("")}</svg></div>`;
+    }
+
+    // "Use the left 2 of 4 lanes", "Use the right lane", "Use the middle 2 lanes".
+    function laneSummary(lanes) {
+      const ok = lanes.map((l, k) => l.active ? k : -1).filter(k => k >= 0);
+      const n = lanes.length, count = ok.length;
+      const word = count === 1 ? "lane" : `${count} lanes`;
+      let where = "highlighted";
+      if (ok[0] === 0 && ok[count - 1] === count - 1) where = "left";
+      else if (ok[count - 1] === n - 1 && ok[0] === n - count) where = "right";
+      else if (ok[count - 1] - ok[0] === count - 1) where = "middle";
+      return count === 1 ? `Use the <b>${where} lane</b> of ${n}` : `Use the <b>${where} ${word}</b> of ${n}`;
+    }
+
+    // Show the guidance for maneuver i. `km` is the distance left to it (auto-
+    // drive), or null when the camera is at the maneuver (step-through).
+    function showLanes(i, km, approaching) {
+      const card = document.getElementById("lane-card");
+      const g = i >= 0 ? laneGuidance(i) : null;
+      const visible = g && (km === null ? !approaching : km <= g.fromKm);
+      const key = visible ? `${i}|${km === null ? "here" : fmtDist(km * 1000)}` : "";
+      if (key === laneKey) return;              // redraw only when something changed
+      laneKey = key;
+      if (!visible) { card.classList.remove("show"); return; }
+      const when = km === null ? "Here" : `In ${fmtDist(km * 1000)}`;
+      card.innerHTML = `
+        <div class="lane-head"><span class="in">${when}</span><span>${g.tag ? `<span class="lane-tag">${g.tag}</span> ` : ""}${
+          escapeHtml(tripSteps[i].maneuver.instruction)}</span></div>
+        ${g.lanes ? `<div class="lanes">${g.lanes.map(laneSvg).join("")}</div>
+                     <div class="lane-say">${laneSummary(g.lanes)}</div>` : ""}`;
+      card.classList.add("show");
     }
 
     // Nearest on-route disruption to a step location, if close (<600m)

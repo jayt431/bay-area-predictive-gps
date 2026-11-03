@@ -722,6 +722,20 @@ draw on arrival.
   with eased bearing smoothing to kill jitter, a 1×/2×/3× speed toggle, and a
   compressed ~60s-at-1× timeline (a simulation, labeled "Simulating drive" —
   there is no real GPS on desktop; swap in device GPS for a real mobile build).
+- **Lane guidance** (`laneGuidance`, `showLanes`, `#lane-card`): driving
+  routes are requested with `banner_instructions=true`. Mapbox puts a turn's
+  lanes on the banner of the step **before** it (the stretch you approach on):
+  `sub.components` of type `lane`, left to right, each with `directions`,
+  `active` (usable for this route) and `active_direction`. The card shows the
+  lanes as road-marking arrows (`LANE_ARROW`, drawn paths — rotating one
+  straight arrow ran turns off the edge of the box), the usable ones lit, and
+  "Use the left 3 lanes of 4" (`laneSummary`). No card when every lane works
+  or none is marked. Merges, on/off ramps and forks get a tag (MERGE / RAMP /
+  EXIT / FORK) and a card even without lane data. Step-through shows the card
+  for the maneuver on screen ("Here"); auto-drive shows it for the next one
+  from the banner's `distanceAlongGeometry` (at least 0.5 km) with a
+  countdown. Desktop: top center of the visible map; phones: above the sim
+  tag. Drive mode only.
 - **Camera control.** A single press on the map canvas releases follow (so one
   drag grabs it, not three), the position dot keeps advancing, a "Re-center"
   button appears, and re-centering plays a guarded eased snap-back (the
