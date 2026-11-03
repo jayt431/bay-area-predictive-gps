@@ -722,6 +722,27 @@ draw on arrival.
   with eased bearing smoothing to kill jitter, a 1×/2×/3× speed toggle, and a
   compressed ~60s-at-1× timeline (a simulation, labeled "Simulating drive" —
   there is no real GPS on desktop; swap in device GPS for a real mobile build).
+- **Live GPS navigation** (`startLive`, `onFix`, `reroute`, `arrive`): the
+  browser's Geolocation API (`watchPosition`, high accuracy) — one code path
+  for iPhone, Android, tablets and laptops. Each fix is snapped to the route
+  (`turf.nearestPointOnLine`) to get distance along it; `showProgress(km)`
+  (shared with the simulation) puts the **next** maneuver in the banner
+  ("In 400 ft") and drives the lane card; `updateLiveEta` sums the remaining
+  step durations into "17 min · 9.0 mi · 5:09 PM". Off the line by more than
+  max(50 m, the fix's accuracy) for 3 fixes in a row → `reroute` from here to
+  the stops not yet reached (`fetchRoute(..., { from, now: true })`).
+  Arrival within 35 m stops GPS (and draws parking for a drive). Heading is the
+  device's when moving faster than 1.5 m/s, else the road's. Screen Wake Lock
+  keeps the screen on, re-taken on `visibilitychange`. Starts by itself on
+  touch devices (`pointer: coarse`); laptops get "◉ Use GPS" / "▶ Simulate".
+  Denied permission stops it with a message. **Limits:** the page must stay
+  open and on screen — no background navigation or CarPlay/Android Auto
+  without a native app; HTTPS required (Render is). Tapping a step while live
+  previews it and releases follow; Re-center returns. During a trip the
+  Schedule/Nearby buttons hide, and nav warnings and "Heads up on the way"
+  use `affectsTrip`, so notes (blocked sidewalks) don't show. Tested with a
+  fake location feed in the page (positions along the route, a 300 m detour,
+  arrival); not yet on a real drive.
 - **Lane guidance** (`laneGuidance`, `showLanes`, `#lane-card`): driving
   routes are requested with `banner_instructions=true`. Mapbox puts a turn's
   lanes on the banner of the step **before** it (the stretch you approach on):

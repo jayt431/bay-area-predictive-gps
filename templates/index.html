@@ -446,6 +446,8 @@
     body.trip-mode #route-summary,
     body.trip-mode #parking-panel,
     body.trip-mode #alert-panel,
+    body.trip-mode #sched-btn, body.trip-mode #nearby-btn,
+    body.trip-mode #sched-panel, body.trip-mode #feed-panel,
     body.trip-mode #bell { display: none !important; }
     #trip-panel { position: absolute; z-index: 4; top: 20px; left: 20px; bottom: 20px; width: 360px;
       display: none; flex-direction: column; overflow: hidden; }
@@ -611,8 +613,9 @@
         <button id="nav-next" class="nav-btn" onclick="stepBy(1)">Next ›</button>
       </div>
       <div class="nav-controls">
-        <button id="nav-drive" class="nav-btn primary" onclick="toggleDrive()">▶ Drive</button>
-        <button id="nav-speed" class="nav-btn" onclick="cycleSpeed()" style="flex:0 0 70px">3×</button>
+        <button id="nav-live" class="nav-btn primary" onclick="toggleLive()">◉ Use GPS</button>
+        <button id="nav-drive" class="nav-btn" onclick="toggleDrive()">▶ Simulate</button>
+        <button id="nav-speed" class="nav-btn" onclick="cycleSpeed()" style="flex:0 0 56px">3×</button>
       </div>
     </div>
     <div id="trip-body"></div>
@@ -1623,13 +1626,14 @@
       await showRoute();
     }
 
-    async function fetchRoute(profile, points = stops) {
+    // `from` and `now` are for rerouting mid-trip: from where you are, leaving now.
+    async function fetchRoute(profile, points = stops, { from = origin, now = false } = {}) {
       // exclude=ferry: left to itself Mapbox will put a bike or a walk on the
       // Alameda–South San Francisco ferry (30 km straight across the Bay, and
       // it runs only at commute hours). Ferries belong to the Transit tab,
       // which knows their timetables.
       const url = `https://api.mapbox.com/directions/v5/mapbox/${profile}/`
-        + [origin, ...points].map(p => `${p.lon},${p.lat}`).join(";")
+        + [from, ...points].map(p => `${p.lon},${p.lat}`).join(";")
         + `?geometries=geojson&overview=full&steps=true&exclude=ferry&access_token=${TOKEN}`
         // Banner instructions carry the lane guidance (which lanes, which way).
         + (profile.startsWith("driving") ? "&banner_instructions=true" : "");
@@ -1639,7 +1643,7 @@
         const dir = await (await fetch(url + extra)).json();
         return (dir.routes && dir.routes[0]) || null;
       };
-      const t = plannedTime();
+      const t = now ? null : plannedTime();
       try {
         let r;
         if (profile === "driving-traffic" && t && timeMode === "arrive") {
@@ -2164,7 +2168,7 @@
       const miles = (tripRoute.distance / 1609.34).toFixed(1);
       document.getElementById("trip-eta").textContent = `▶ ${mins} min`;
       document.getElementById("trip-dist").textContent = ` · ${miles} mi`;
-      document.getElementById("nav-drive").textContent = `▶ ${modeInfo().verb}`;
+      document.getElementById("nav-drive").textContent = "▶ Simulate";
       document.getElementById("sim-tag").textContent = `◉ Simulating ${modeInfo().sim}`;
       // fitBounds leaves its padding on the map, and every later camera move
       // honours it. The route view's padding (a tall sheet at the bottom on a
@@ -2179,10 +2183,14 @@
       prepDrive();
       progressKm = 0;
       gotoStep(0);
+      // On a phone or tablet, navigation follows you. On a laptop (Wi-Fi
+      // location, no movement) it waits for a tap on "Use GPS" or "Simulate".
+      if (navigator.geolocation && matchMedia("(pointer: coarse)").matches) startLive();
     }
 
     function endTrip() {
       stopDrive();
+      stopLive();
       showLanes(-1, null);
       setFollowing(true);
       document.body.classList.remove("trip-mode");
@@ -2223,6 +2231,7 @@
       curPos = loc; curBearing = step.maneuver.bearing_after ?? 0;
       setFollowing(true);   // a deliberate step re-centers the camera
       map.easeTo({ center: loc, zoom: 16.5, pitch: 60, bearing: curBearing, duration: 900 });
+      if (live) { setFollowing(false); updateStepBanner(i); return; }   // a preview; Re-center returns to you
       map.getSource("nav").setData(pt(loc[0], loc[1]));
       updateStepBanner(i);
     }
@@ -2266,9 +2275,10 @@
 
     function startDrive() {
       if (!tripSteps.length) return;
+      stopLive();
       driving = true;
       document.getElementById("nav-drive").textContent = "⏸ Pause";
-      document.getElementById("nav-drive").classList.remove("primary");
+      document.getElementById("sim-tag").textContent = `◉ Simulating ${modeInfo().sim}`;
       if (progressKm >= routeLineKm) progressKm = 0;  // restart if at the end
       lastTs = 0; smoothedBearing = null;
       driveRAF = requestAnimationFrame(driveFrame);
@@ -2278,7 +2288,7 @@
       driving = false;
       if (driveRAF) cancelAnimationFrame(driveRAF);
       const btn = document.getElementById("nav-drive");
-      if (btn) { btn.textContent = `▶ ${modeInfo().verb}`; btn.classList.add("primary"); }
+      if (btn) btn.textContent = "▶ Simulate";
     }
 
     function driveFrame(ts) {
@@ -2317,11 +2327,181 @@
       map.getSource("nav").setData(pt(here[0], here[1]));
       if (following && !recentering) map.jumpTo({ center: here, zoom: 16.5, pitch: 60, bearing: smoothedBearing });
 
+      showProgress(km);
+    }
+
+    // While moving (simulated or real), the banner shows what's coming next and
+    // how far: "In 400 ft · Turn left onto Lombard Street". Step-through keeps
+    // showing the maneuver on screen (updateStepBanner).
+    let movingKey = "";
+    function showProgress(km) {
       let i = 0;
       for (let k = 0; k < stepCumKm.length; k++) { if (stepCumKm[k] <= km + 0.0001) i = k; }
-      if (i !== stepIndex) updateStepBanner(i);
-      const next = i + 1;
-      showLanes(next, next < stepCumKm.length ? stepCumKm[next] - km : null, true);
+      const next = tripSteps[i + 1];
+      const left = next ? Math.max(stepCumKm[i + 1] - km, 0) : null;
+      showLanes(i + 1, left, true);
+      const instruction = next ? next.maneuver.instruction : tripSteps[i].maneuver.instruction;
+      let sub = next ? `In ${fmtDist(left * 1000)}` : "Arriving";
+      const after = tripSteps[i + 2];
+      if (after && left !== null && left < 0.3) sub += ` · then ${after.maneuver.instruction}`;
+      const near = next && disruptionNearStep(next.maneuver.location);
+      if (near) sub += ` · <span class="${near.severity === "red" ? "danger" : "warn"}">⚠ ${escapeHtml(near.name)} ahead</span>`;
+      const key = `${instruction}|${sub}`;
+      if (key === movingKey && i === stepIndex) return;   // touch the DOM only on a change
+      movingKey = key;
+      stepIndex = i;
+      document.getElementById("nav-instruction").textContent = instruction;
+      document.getElementById("nav-sub").innerHTML = sub;
+      const target = next ? i + 1 : i;
+      document.querySelectorAll(".step-item[data-step]").forEach(el =>
+        el.classList.toggle("current", +el.dataset.step === target));
+    }
+
+    // ---- Live navigation: the device's own GPS ----
+    // One code path for every device: the browser's Geolocation API reports
+    // position as you move (iPhone, Android, tablet, laptop). Each fix is
+    // snapped to the route to find where you are along it; the banner, the
+    // lane card and the arrival time follow from that. Three fixes in a row
+    // off the route plans a new one from where you are. The screen is kept on
+    // (Wake Lock), because phones pause a page whose screen has gone dark —
+    // which is also the limit: the page must stay open, there's no background
+    // navigation or CarPlay without a native app.
+    let live = false, liveWatch = null, wakeLock = null;
+    let offRouteFixes = 0, rerouting = false, arrived = false;
+    const OFF_ROUTE_M = 50;    // further than this from the line (or the fix's own error) is "off"
+    const OFF_ROUTE_FIXES = 3; // in a row, so one bad fix in a tunnel doesn't reroute
+    const ARRIVED_M = 35;
+
+    function toggleLive() { live ? stopLive() : startLive(); }
+
+    function startLive() {
+      if (!navigator.geolocation) { setNavNote("This browser can't share its location."); return; }
+      stopDrive();
+      live = true; arrived = false; offRouteFixes = 0; movingKey = "";
+      document.getElementById("nav-live").textContent = "■ Stop GPS";
+      document.getElementById("sim-tag").textContent = "◉ Live GPS · finding you…";
+      setFollowing(true);
+      keepScreenOn();
+      liveWatch = navigator.geolocation.watchPosition(onFix, onFixError,
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 });
+    }
+
+    function stopLive() {
+      if (liveWatch !== null) navigator.geolocation.clearWatch(liveWatch);
+      liveWatch = null;
+      live = false;
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+      const btn = document.getElementById("nav-live");
+      if (btn) btn.textContent = "◉ Use GPS";
+    }
+
+    async function keepScreenOn() {
+      try { wakeLock = await navigator.wakeLock.request("screen"); } catch { wakeLock = null; }
+    }
+    // The lock is dropped whenever the page is hidden; take it back on return.
+    document.addEventListener("visibilitychange", () => {
+      if (live && document.visibilityState === "visible") keepScreenOn();
+    });
+
+    function setNavNote(text) { document.getElementById("nav-sub").textContent = text; movingKey = ""; }
+
+    function onFixError(err) {
+      if (err.code === 1) {                     // permission denied: no point retrying
+        stopLive();
+        setNavNote("Location is off for this site. Allow it in your browser's settings, or use Simulate.");
+        document.getElementById("sim-tag").textContent = "◉ Location blocked";
+      } else {
+        document.getElementById("sim-tag").textContent = "◉ Live GPS · waiting for a signal…";
+      }
+    }
+
+    function onFix(pos) {
+      if (!live || !tripRoute) return;
+      const here = [pos.coords.longitude, pos.coords.latitude];
+      const accuracy = pos.coords.accuracy || 0;
+      document.getElementById("sim-tag").textContent =
+        `◉ Live GPS · ±${Math.round(accuracy)} m${accuracy > 100 ? " · weak signal" : ""}`;
+
+      const line = _driveLine();
+      const snap = turf.nearestPointOnLine(line, turf.point(here), { units: "kilometers" });
+      const offM = snap.properties.dist * 1000;
+      const km = Math.min(snap.properties.location, routeLineKm);
+
+      if (offM > Math.max(OFF_ROUTE_M, accuracy)) {
+        if (++offRouteFixes >= OFF_ROUTE_FIXES && !rerouting) reroute(here);
+      } else offRouteFixes = 0;
+      const onRoute = offRouteFixes === 0;
+      const shown = onRoute ? snap.geometry.coordinates : here;
+
+      // Heading: the device's own while it's moving, else the road's direction.
+      const moving = pos.coords.speed != null && pos.coords.speed > 1.5;
+      const ahead = turf.along(line, Math.min(km + 0.03, routeLineKm), { units: "kilometers" }).geometry.coordinates;
+      const bearing = moving && pos.coords.heading != null && !isNaN(pos.coords.heading)
+        ? pos.coords.heading : turf.bearing(turf.point(shown), turf.point(ahead));
+
+      curPos = shown; curBearing = bearing; progressKm = km;
+      map.getSource("nav").setData(pt(shown[0], shown[1]));
+      if (following && !recentering)
+        map.easeTo({ center: shown, zoom: 16.5, pitch: 60, bearing, duration: 900, easing: t => t });
+      if (rerouting) return;
+
+      const dest = tripRoute.geometry.coordinates[tripRoute.geometry.coordinates.length - 1];
+      const toEnd = turf.distance(turf.point(here), turf.point(dest), { units: "kilometers" }) * 1000;
+      if (!arrived && (toEnd < ARRIVED_M || (onRoute && routeLineKm - km < ARRIVED_M / 1000))) return arrive();
+      if (onRoute) { showProgress(km); updateLiveEta(km); }
+    }
+
+    // Time left: the remaining steps, plus the unfinished part of this one.
+    function updateLiveEta(km) {
+      let secs = 0;
+      tripSteps.forEach((s, k) => {
+        const start = stepCumKm[k], len = s.distance / 1000;
+        if (start >= km) secs += s.duration;
+        else if (start + len > km && len > 0) secs += s.duration * (start + len - km) / len;
+      });
+      const mins = Math.max(1, Math.round(secs / 60));
+      const at = new Date(Date.now() + secs * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      document.getElementById("trip-eta").textContent = `▶ ${mins} min`;
+      document.getElementById("trip-dist").textContent = ` · ${((routeLineKm - km) / 1.60934).toFixed(1)} mi · ${at}`;
+    }
+
+    function arrive() {
+      arrived = true;
+      stopLive();
+      showLanes(-1, null);
+      document.getElementById("nav-instruction").textContent = `You've arrived at ${tripName || "your destination"}.`;
+      setNavNote("");
+      document.getElementById("sim-tag").textContent = "◉ Arrived";
+      if (travelMode === "drive") drawParkingGeometry();
+    }
+
+    // Off the route: plan again from here to the stops not yet reached.
+    async function reroute(here) {
+      rerouting = true;
+      setNavNote("Off route · finding a new way…");
+      // Which stop you're heading to: each Mapbox leg ends at one stop.
+      let legStart = 0, leg = 0;
+      (tripRoute.legs || []).forEach((l, k) => {
+        if (stepIndex >= legStart) leg = k;
+        legStart += (l.steps || []).length;
+      });
+      const remaining = stops.slice(leg);
+      const fresh = remaining.length
+        ? await fetchRoute(modeInfo().profile, remaining, { from: { lon: here[0], lat: here[1] }, now: true })
+        : null;
+      if (live && fresh) {
+        tripRoute = fresh;
+        tripSteps = (fresh.legs || []).flatMap(l => l.steps || []);
+        prepDrive();
+        map.getSource("route").setData({ type: "Feature", geometry: fresh.geometry, properties: {} });
+        renderTripBody();
+        laneKey = ""; movingKey = "";
+        setNavNote("New route found.");
+      } else if (live) {
+        setNavNote("Couldn't find a new route. Head back toward the line.");
+      }
+      offRouteFixes = 0;
+      rerouting = false;
     }
 
     function cycleSpeed() {
@@ -2407,7 +2587,9 @@
     // Nearest on-route disruption to a step location, if close (<600m)
     function disruptionNearStep(loc) {
       let best = null, bestD = 0.6;
-      tripDisruptions.forEach(d => {
+      // Only what can slow you (affectsTrip): a blocked sidewalk isn't worth a
+      // warning while driving, any more than it raises the trip's risk.
+      tripDisruptions.filter(affectsTrip).forEach(d => {
         const km = turf.distance(turf.point(loc), turf.point([d.lon, d.lat]), { units: "kilometers" });
         if (km < bestD) { bestD = km; best = d; }
       });
@@ -2416,9 +2598,11 @@
 
     function renderTripBody() {
       let html = "";
-      if (tripDisruptions.length) {
+      // What can slow you only; notes (a blocked sidewalk) stay in the alert panel.
+      const headsUp = tripDisruptions.filter(affectsTrip);
+      if (headsUp.length) {
         html += `<span class="mono-label trip-sec-title">Heads up on the way</span>`;
-        html += tripDisruptions.map(d => `
+        html += headsUp.map(d => `
           <div class="alert-item"><div class="alert-dot ${d.severity}"></div>
           <div><div class="alert-name">${escapeHtml(d.name)}</div><div class="alert-reason">${escapeHtml(d.reason)}</div></div></div>`).join("");
       }

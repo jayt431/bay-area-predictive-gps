@@ -220,6 +220,32 @@ driver needs it. The first version drew each arrow by rotating a straight
 one, which pushed left and right turns off the edge of their box; they are
 now drawn as proper turn markings.
 
+### Navigating with your phone's real GPS
+Navigation used to be a simulation: a dot gliding along the route on a
+compressed timeline, useful for demos and nothing else. Now it follows where
+you actually are.
+
+The browser on every device — iPhone, Android, tablet, laptop — can report
+its location continuously once you allow it, so one piece of code covers all
+of them; there's no separate iPhone or Android version to build. On a phone,
+tapping Start trip turns it on by itself. Each position is matched to the
+nearest point on the route, which tells the app how far along you are: the
+banner shows the next turn and how far it is ("In 400 ft · Turn left onto
+Lombard"), the lane card appears before it, and the arrival time updates as
+you go. Wander off the route for three readings in a row and it plans a new
+one from where you are; one stray reading, in a tunnel say, doesn't trigger
+it. It keeps the screen on while navigating and stops itself when you arrive.
+
+The limit is the browser itself: the app has to stay open on screen. Phones
+pause web pages in the background, so there's no navigating with the screen
+off, and no CarPlay or Android Auto — those need a native app.
+
+It was tested by feeding the page fake positions — along the route, a 300 m
+detour that triggered a reroute, and arrival — but not yet on a real drive.
+The test also caught a leftover from the false-alarm fix: the navigation
+banner still warned "Blocked sidewalk ahead" while driving. Navigation now
+uses the same rule as the risk level — only things that can slow you.
+
 ### Keeping score
 The honest question about this app is whether its forecasts are any good, and
 whether they ever change what you do. Until now there was no way to answer
