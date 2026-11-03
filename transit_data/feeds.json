@@ -44,9 +44,9 @@
   "CE": {
     "agency": "ACE",
     "start": "20250101",
-    "end": "20261231",
-    "version": "20261009",
-    "generated": "10/9/2026 4:08:00 PM"
+    "end": "20271231",
+    "version": "20261102",
+    "generated": "11/2/2026 7:29:26 PM"
   },
   "CM": {
     "agency": "Commute.org",
@@ -172,7 +172,7 @@
     "start": "20261001",
     "end": "20270228",
     "version": "20261102",
-    "generated": "11/2/2026 11:04:47 AM"
+    "generated": "11/2/2026 9:46:59 PM"
   },
   "SC": {
     "agency": "VTA",
@@ -213,8 +213,8 @@
     "agency": "SamTrans",
     "start": "20260920",
     "end": "20270109",
-    "version": "20261029",
-    "generated": "10/29/2026 12:48:46 PM"
+    "version": "20261102",
+    "generated": "11/2/2026 11:48:19 PM"
   },
   "SO": {
     "agency": "Sonoma County Transit",
@@ -227,8 +227,8 @@
     "agency": "Santa Rosa CityBus",
     "start": "20260929",
     "end": "20270213",
-    "version": "20261102",
-    "generated": "11/2/2026 9:15:38 AM"
+    "version": "20261103",
+    "generated": "11/3/2026 9:14:53 AM"
   },
   "SS": {
     "agency": "South City Shuttle",
