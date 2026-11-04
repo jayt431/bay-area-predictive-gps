@@ -171,15 +171,15 @@
     "agency": "SF Bay Ferry",
     "start": "20261001",
     "end": "20270228",
-    "version": "20261102",
-    "generated": "11/2/2026 9:46:59 PM"
+    "version": "20261103",
+    "generated": "11/3/2026 6:03:24 PM"
   },
   "SC": {
     "agency": "VTA",
     "start": "20261026",
     "end": "20270110",
-    "version": "20261027",
-    "generated": "10/27/2026 8:19:00 PM"
+    "version": "20261103",
+    "generated": "11/3/2026 4:21:26 PM"
   },
   "SE": {
     "agency": "Solano Express",
