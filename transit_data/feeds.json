@@ -50,10 +50,10 @@
   },
   "CM": {
     "agency": "Commute.org",
-    "start": "20260307",
-    "end": "20270101",
-    "version": "20260810",
-    "generated": "8/10/2026 1:53:33 PM"
+    "start": "20261105",
+    "end": "20270630",
+    "version": "20261105",
+    "generated": "11/5/2026 12:57:07 PM"
   },
   "CT": {
     "agency": "Caltrain",
@@ -218,10 +218,10 @@
   },
   "SO": {
     "agency": "Sonoma County Transit",
-    "start": "20260811",
-    "end": "20270109",
-    "version": "20260811",
-    "generated": "8/11/2026 10:30:13 AM"
+    "start": "20261030",
+    "end": "20270213",
+    "version": "20261105",
+    "generated": "11/5/2026 10:53:27 AM"
   },
   "SR": {
     "agency": "Santa Rosa CityBus",
