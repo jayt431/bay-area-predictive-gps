@@ -136,8 +136,8 @@
     "agency": "MVgo",
     "start": "20241111",
     "end": "20270101",
-    "version": "20260730",
-    "generated": "7/30/2026 12:14:58 PM"
+    "version": "20261112",
+    "generated": "11/12/2026 10:16:05 AM"
   },
   "PE": {
     "agency": "Petaluma Transit",
@@ -241,8 +241,8 @@
     "agency": "SolTrans",
     "start": "20261031",
     "end": "20271231",
-    "version": "20261110",
-    "generated": "11/10/2026 10:33:37 AM"
+    "version": "20261111",
+    "generated": "11/11/2026 10:31:29 AM"
   },
   "TF": {
     "agency": "Treasure Island Ferry",
