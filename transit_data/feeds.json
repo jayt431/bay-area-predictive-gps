@@ -31,8 +31,8 @@
     "agency": "BART",
     "start": "20260810",
     "end": "20270110",
-    "version": "20261019",
-    "generated": "10/19/2026 4:07:51 PM"
+    "version": "20261115",
+    "generated": "11/15/2026 4:19:46 PM"
   },
   "CC": {
     "agency": "County Connection",
@@ -143,8 +143,8 @@
     "agency": "Petaluma Transit",
     "start": "20260810",
     "end": "20991231",
-    "version": "20261104",
-    "generated": "11/4/2026 11:19:24 AM"
+    "version": "20261116",
+    "generated": "11/16/2026 8:54:44 AM"
   },
   "PG": {
     "agency": "PresidiGo",
