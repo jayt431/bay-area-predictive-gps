@@ -61,3 +61,14 @@ def test_public_endpoints_stay_open(client):
             assert client.get(path).status_code == 200
         # The public config never carries a real home.
         assert client.get("/api/config").get_json()["home"]["label"].startswith("Home · SoMa")
+
+
+def test_a_trip_planned_for_later_still_gets_a_forecast(client):
+    # "Leave at" and "Arrive by" send the departure as Pacific wall time with
+    # no zone; comparing it with the server's zoned clock raised, the request
+    # answered 500, and the page silently showed no forecast at all.
+    from datetime import datetime, timedelta
+    later = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
+    res = client.post("/api/brief", json={"destination": "Chase Center", "mode": "drive", "eta_min": 9,
+                                          "distance_mi": 1.6, "disruptions": [], "parking": [], "depart_at": later})
+    assert res.status_code == 200 and res.get_json()["alert"]["risk"] == "none"
