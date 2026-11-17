@@ -335,6 +335,10 @@ def _live_conditions(ctx: dict) -> tuple[dict, dict]:
     if ctx.get("depart_at"):
         try:
             planned = datetime.fromisoformat(ctx["depart_at"])
+            # The page sends Pacific wall time with no zone; the clock here
+            # has one, and Python refuses to compare the two.
+            if planned.tzinfo is None:
+                planned = planned.replace(tzinfo=now.tzinfo)
             if planned > now:
                 now = planned
         except ValueError:
