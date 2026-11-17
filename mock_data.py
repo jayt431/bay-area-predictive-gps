@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import random
 from datetime import datetime, timedelta
 from time import monotonic
@@ -595,6 +596,17 @@ def get_civic_events(lat: float, lon: float, radius: int = 1500,
 # than shown. Real break-in data (SFPD incident reports) is the path back.
 # ---------------------------------------------------------------------------
 
+def street_case(name: str) -> str:
+    """DataSF street names arrive in capitals ("04TH ST", "MISSION BAY BLVD
+    SOUTH"). str.title() turns "04TH" into "04Th"; numbered streets read
+    "4th St" on every sign."""
+    words = []
+    for word in (name or "").split():
+        ordinal = re.fullmatch(r"0*(\d+)(ST|ND|RD|TH)", word.upper())
+        words.append(f"{ordinal.group(1)}{ordinal.group(2).lower()}" if ordinal else word.capitalize())
+    return " ".join(words)
+
+
 _METERS_URL = "https://data.sf.gov/resource/8vzz-qzz9.json"
 
 
@@ -629,7 +641,7 @@ def get_metered_streets(lat: float, lon: float, radius: int = 350, max_streets: 
         clon = sum(p[0] for p in pts) / len(pts)
         clat = sum(p[1] for p in pts) / len(pts)
         streets.append({
-            "street": name.title(),
+            "street": street_case(name),
             "count": len(pts),
             "lat": round(clat, 6),
             "lon": round(clon, 6),

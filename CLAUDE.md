@@ -427,6 +427,33 @@ on a full-screen dark Mapbox map. Requires `MAPBOX_TOKEN` (env var; also set on
 Render). Uses Mapbox GL JS + Turf (both via CDN). Skipped Figma — designing
 directly in code.
 
+- **Layout and design tokens** (redesign, 2026-11): one **side panel**
+  (`#side`) replaces the four corner panels. `#search-panel` is its header —
+  From and To stacked, swap beside them — and stays put while `#side-body`
+  scrolls; below it sits either `#home-view` ("Coming up", saved, suggested)
+  or `#route-summary`, with parking as a section at the bottom of the route
+  (`#parking-panel`, no longer its own panel). The header is outside the
+  scroller so place suggestions can overflow it: they open **down** on a
+  desktop, **up** on a phone. On a phone `#side` is the bottom sheet (56dvh);
+  with a route the header hides, and CSS `order` puts the planning controls
+  (time, add stop, transit plan, parking) after title → modes → time/distance
+  → forecast → Start trip, which all fit without scrolling. `:root` holds the
+  tokens every rule uses: six text sizes (`--t-xs`…`--t-2xl`), four corner
+  sizes (`--r-sm`, `--r-md`, `--r-lg`, `--r-pill`), `--fill`, `--hair`,
+  `--surface`, `--accent-soft`. The only literal size left is the phone
+  inputs' `16px !important` (iOS zooms into anything smaller). Buttons are
+  sentence case in the text face; spaced capitals are for section labels only.
+  The forecast (`#brief`) is a block coloured by risk (`none`/`low`/`medium`/
+  `high` on the element) with "No risk" style wording (`RISK_WORD`); advice
+  shows only when there is some. Notes on the map (`note: !affectsTrip(d)`)
+  are small grey dots (`alert-note` layer), so the map never contradicts
+  "no risk". `body.multi-stop` marks a trip with several stops.
+- **Coming up** (`loadToday`, `goToTrip`): once unlocked, the home view lists
+  trips in the next 36 h from `GET /api/schedule`, each with the risk from its
+  delivered alert (`GET /api/predictions`, id `<trip id>:<next_at>`) or when
+  that alert is due (`forecastDue`, mirroring `alerts.alert_due_at`). Tapping
+  one plans it on the map in its mode, arriving by its time. Locked (a
+  visitor): hidden.
 - **Where from** (`places.py`, `/api/places`): routes start from `origin` —
   home, the browser's current location (◎), or any searched place, chosen in
   the "From" row. **Current location is the default**

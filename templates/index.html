@@ -18,10 +18,17 @@
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
 
   <style>
+    /* Design tokens. One scale for type, corners and colour, so every panel
+       reads as part of the same app: six text sizes, four corner sizes. */
     :root {
-      --bg: #0A0A0B; --ink: #E8E8E8; --muted: #888; --line: #2a2a2e;
-      --panel: rgba(16,16,20,0.72); --accent: #00E5C7;
-      --red: #FF3B30; --yellow: #FFB020; --green: #3DD68C; --meter: #A78BFA; --garage: #4F8EF7;
+      --bg: #0A0A0B; --ink: #E8E8E8; --muted: #8B8B93; --line: #2a2a2e;
+      --panel: rgba(16,16,20,0.80); --surface: #15151A;
+      --fill: rgba(255,255,255,0.05); --hair: rgba(255,255,255,0.06);
+      --accent: #00E5C7; --on-accent: #05221e; --accent-soft: rgba(0,229,199,0.10);
+      --red: #FF3B30; --red-soft: #FF8A80; --yellow: #FFB020; --green: #3DD68C;
+      --meter: #A78BFA; --garage: #4F8EF7; --cal: #7AA2FF;
+      --t-xs: 11px; --t-sm: 12px; --t-md: 13px; --t-lg: 15px; --t-xl: 18px; --t-2xl: 22px;
+      --r-sm: 6px; --r-md: 10px; --r-lg: 16px; --r-pill: 999px;
       --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
       --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -33,214 +40,221 @@
       background: var(--panel);
       backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      border-radius: var(--r-lg); box-shadow: 0 8px 32px rgba(0,0,0,0.4);
     }
     .mono-label {
-      font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+      font-family: var(--mono); font-size: var(--t-xs); letter-spacing: 0.14em;
       text-transform: uppercase; color: var(--muted);
     }
 
-    /* ---- Search panel (bottom-left) ---- */
-    #search-panel { position: absolute; z-index: 3; left: 20px; bottom: 20px; width: 340px; padding: 18px; }
-    #search-panel .mono-label { margin-bottom: 8px; display: block; }
-    .search-wrap { position: relative; }
-    .from-row { display: flex; gap: 6px; align-items: center; margin-bottom: 14px; }
-    .from-wrap { flex: 1; min-width: 0; }
-    #from-input { width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.35); border: 1px solid var(--line);
-      border-radius: 9px; padding: 8px 11px; color: var(--ink); font-size: 13px; font-family: var(--sans); outline: none; }
-    #from-input:focus { border-color: var(--accent); }
+    /* ---- The side panel: start and destination on top, then the home view
+       or the route. One panel instead of four corners. ---- */
+    #side { position: absolute; z-index: 3; top: 20px; left: 20px; width: 360px; max-height: calc(100vh - 40px);
+      display: flex; flex-direction: column; }
+    #search-panel { position: relative; z-index: 2; padding: 14px; }
+    #side-body { min-height: 0; overflow-y: auto; border-top: 1px solid var(--hair); }
+    .search-wrap { position: relative; flex: 1; min-width: 0; }
+    .trip-ends { position: relative; }
+    .trip-ends::before { content: ""; position: absolute; left: 6px; top: 28px; bottom: 28px;
+      border-left: 2px dotted var(--line); }
+    .end-row { display: flex; align-items: center; gap: 6px; }
+    .end-row + .end-row, .from-note + .end-row, .from-note + .add-label, .add-label + .end-row { margin-top: 8px; }
+    .end-dot { position: relative; flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; margin: 0 6px 0 2px; }
+    .end-dot.from { border: 2px solid var(--muted); background: var(--surface); }
+    .end-dot.to { background: var(--accent); }
+    #from-input, #search-input { width: 100%; background: rgba(0,0,0,0.35); border: 1px solid var(--line);
+      border-radius: var(--r-md); color: var(--ink); font-family: var(--sans); outline: none; transition: border-color 0.15s; }
+    #from-input { padding: 9px 12px; font-size: var(--t-md); }
+    #search-input { padding: 11px 12px; font-size: var(--t-lg); }
+    #from-input:focus, #search-input:focus { border-color: var(--accent); }
     #from-input::placeholder { color: var(--ink); opacity: 0.85; }
-    .from-btn { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--line);
-      background: none; color: var(--ink); cursor: pointer; font-size: 15px; }
-    .from-btn:hover { border-color: var(--accent); }
-    .from-btn.on { border-color: var(--accent); color: var(--accent); }
-    #from-sugg { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 6; display: none;
-      background: #141418; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
-    #from-sugg.open { display: block; }
-    .from-note { font-size: 11px; color: var(--muted); margin: -8px 0 12px; }
-    .from-note button { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 11px; padding: 0; }
-    #search-input {
-      width: 100%; background: rgba(0,0,0,0.35); border: 1px solid var(--line);
-      border-radius: 10px; padding: 12px 14px; color: var(--ink);
-      font-size: 15px; font-family: var(--sans); outline: none; transition: border-color 0.15s;
-    }
     #search-input::placeholder { color: #666; }
-    #search-input:focus { border-color: var(--accent); }
+    .from-btn { flex: 0 0 auto; width: 36px; height: 36px; border-radius: var(--r-md); border: 1px solid var(--line);
+      background: none; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .from-btn:hover { border-color: var(--accent); color: var(--ink); }
+    .from-btn.on { border-color: var(--accent); color: var(--accent); }
+    #from-sugg { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 6; display: none;
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 4px; }
+    #from-sugg.open { display: block; }
+    .from-note { font-size: var(--t-xs); color: var(--muted); margin: 6px 0 0 24px; line-height: 1.4; }
+    .from-note button { background: none; border: none; color: var(--accent); cursor: pointer; font-size: var(--t-xs); padding: 0; }
+    .add-label { display: none; margin-left: 24px; }
+    body.adding-stop .add-label { display: block; }
 
-    /* Geocoding suggestions dropdown (opens upward, above the input) */
+    /* Place suggestions: below the box on a desktop, above it on a phone
+       (where the box sits at the bottom of the screen). */
     #suggestions {
-      position: absolute; left: 0; right: 0; bottom: calc(100% + 8px);
+      position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 6;
       display: none; max-height: 260px; overflow-y: auto; padding: 6px;
     }
     #suggestions.open { display: block; }
     /* Opaque: the list opens over the From row, which shouldn't show through. */
     #suggestions { background: rgba(16, 16, 20, 0.98); }
-    .sugg-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; }
-    .sugg-item:hover, .sugg-item.hi { background: rgba(255,255,255,0.06); }
-    .sugg-name { font-size: 14px; color: var(--ink); }
-    .sugg-sub  { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
-    .sugg-tag { font-size: 10px; color: var(--accent); font-family: var(--mono); margin-left: 4px; }
-    .sugg-head { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+    .sugg-item { padding: 10px 12px; border-radius: var(--r-md); cursor: pointer; }
+    .sugg-item:hover, .sugg-item.hi { background: var(--fill); }
+    .sugg-name { font-size: var(--t-md); color: var(--ink); }
+    .sugg-sub  { font-size: var(--t-xs); color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+    .sugg-tag { font-size: var(--t-xs); color: var(--accent); font-family: var(--mono); margin-left: 4px; }
+    .sugg-head { font-family: var(--mono); font-size: var(--t-xs); letter-spacing: 0.06em; text-transform: uppercase;
       color: var(--muted); padding: 8px 12px 4px; }
 
-    .quick-title { margin: 16px 0 8px; }
+    #home-view { padding: 2px 14px 14px; }
+    .quick-title { display: block; margin: 12px 0 8px; }
     .quick-row { display: flex; flex-wrap: wrap; gap: 8px; }
     .quick-chip {
-      font-size: 12px; padding: 7px 12px; border-radius: 20px; cursor: pointer;
-      background: rgba(255,255,255,0.05); border: 1px solid var(--line); color: var(--ink);
+      font-size: var(--t-sm); padding: 7px 12px; border-radius: var(--r-pill); cursor: pointer;
+      background: var(--fill); border: 1px solid var(--line); color: var(--ink);
       transition: background 0.12s, border-color 0.12s;
     }
-    .quick-chip:hover { background: rgba(0,229,199,0.10); border-color: var(--accent); }
+    .quick-chip:hover { background: var(--accent-soft); border-color: var(--accent); }
 
     /* Saved destinations */
     .saved-chip {
       display: inline-flex; align-items: center; gap: 8px;
-      font-size: 12px; padding: 7px 10px 7px 12px; border-radius: 20px;
-      background: rgba(255,255,255,0.05); border: 1px solid var(--line); color: var(--ink);
+      font-size: var(--t-sm); padding: 7px 10px 7px 12px; border-radius: var(--r-pill);
+      background: var(--fill); border: 1px solid var(--line); color: var(--ink);
       transition: border-color 0.12s;
     }
     .saved-chip:hover { border-color: var(--accent); }
     .saved-chip > .go { cursor: pointer; }
-    .saved-chip > .x { cursor: pointer; color: var(--muted); font-size: 15px; line-height: 1; }
+    .saved-chip > .x { cursor: pointer; color: var(--muted); font-size: var(--t-lg); line-height: 1; }
     .saved-chip > .x:hover { color: var(--red); }
 
     /* Star toggle in the route summary */
     .rs-head { display: flex; justify-content: space-between; align-items: center; }
     .star-btn { background: none; border: none; cursor: pointer; color: var(--muted); padding: 2px; display: flex; }
     .rs-actions { display: flex; align-items: center; gap: 6px; }
-    .dest-label { display: flex; align-items: center; justify-content: space-between; }
-    .dest-label .mono-label { margin-bottom: 8px; }
-    .swap-btn { background: none; border: 1px solid var(--line); border-radius: 8px; color: var(--ink);
-      width: 30px; height: 26px; margin-bottom: 6px; cursor: pointer; font-size: 14px; line-height: 1; }
-    .swap-btn:hover { border-color: var(--accent); color: var(--accent); }
-    .swap-mini { font-size: 16px; line-height: 1; color: var(--muted); }
     /* Stops */
-    .rs-stops { margin: -6px 0 10px; }
-    .stop-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-radius: 8px;
+    .rs-stops:empty { display: none; }
+    .stop-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-radius: var(--r-md);
       border: 1px solid transparent; background: rgba(255,255,255,0.02); margin-bottom: 4px; }
-    .stop-row.dragging { border-color: var(--accent); background: rgba(0,229,199,0.08); }
-    .stop-handle { cursor: grab; color: var(--muted); font-size: 14px; padding: 2px 4px; touch-action: none; user-select: none; }
-    .stop-n { width: 18px; height: 18px; border-radius: 50%; background: #fff; color: #0A0A0B; font-size: 10px;
+    .stop-row.dragging { border-color: var(--accent); background: var(--accent-soft); }
+    .stop-handle { cursor: grab; color: var(--muted); font-size: var(--t-md); padding: 2px 4px; touch-action: none; user-select: none; }
+    .stop-n { width: 18px; height: 18px; border-radius: 50%; background: #fff; color: var(--bg); font-size: var(--t-xs);
       font-weight: 700; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
-    .stop-name { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .stop-time { font-family: var(--mono); font-size: 10px; color: var(--muted); white-space: nowrap; }
-    .stop-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 0 2px; }
+    .stop-name { flex: 1; min-width: 0; font-size: var(--t-md); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stop-time { font-family: var(--mono); font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
+    .stop-x { background: none; border: none; color: var(--muted); cursor: pointer; font-size: var(--t-lg); padding: 0 2px; }
     .stop-x:hover { color: var(--ink); }
-    .add-stop { background: none; border: 1px dashed var(--line); border-radius: 8px; color: var(--accent); width: 100%;
-      padding: 7px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; }
-    .add-stop:hover { border-color: var(--accent); }
-    .tp-badge.stop { background: #fff; color: #0A0A0B; border-radius: 50%; min-width: 22px; }
-    .cancel-add { display: none; background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer;
-      margin: 0 6px 6px auto; }
+    .add-stop { background: none; border: none; color: var(--accent); padding: 2px 0; cursor: pointer; }
+    .add-stop:hover { text-decoration: underline; }
+    .tp-badge.stop { background: #fff; color: var(--bg); border-radius: 50%; min-width: 22px; }
+    .cancel-add { display: none; background: none; border: none; color: var(--muted); font-size: var(--t-sm); cursor: pointer;
+      padding: 0 4px; }
+    /* With a route open the home view steps aside; adding a stop brings the
+       saved and suggested places back, one tap each. */
+    body.has-route #home-view { display: none; }
+    body.has-route.adding-stop #home-view { display: block; }
     body.adding-stop .cancel-add { display: inline-block; }
-    /* While adding a stop, the saved and suggested places are back: one tap adds one. */
-    body.has-route.adding-stop #search-panel #saved-section,
-    body.has-route.adding-stop #search-panel .quick-title { display: block !important; }
-    body.has-route.adding-stop #search-panel #quick-row { display: flex !important; }
     .swap-mini:hover { color: var(--accent); }
-    .rs-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1;
+    .rs-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: var(--t-xl); line-height: 1;
       padding: 0 2px; }
     .rs-close:hover { color: var(--ink); }
     .phone-only { display: none; }
-    /* With a route open, the search panel only needs From and Destination;
-       the suggestion chips are for choosing one. That keeps it clear of the
-       route card on shorter windows. */
-    body.has-route #search-panel #saved-section,
-    body.has-route #search-panel #quick-row,
-    body.has-route #search-panel .quick-title { display: none !important; }
     .star-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; }
     .star-btn.on { color: var(--accent); }
     .star-btn.on svg { fill: var(--accent); stroke: var(--accent); }
 
-    /* ---- Route summary (top-left) ---- */
-    #route-summary { position: absolute; z-index: 3; top: 20px; left: 20px; width: 300px; padding: 16px 18px; display: none; }
-    #route-summary.open { display: block; }
-    .rs-dest { font-size: 16px; font-weight: 600; margin: 6px 0 12px; line-height: 1.3; }
-    .rs-stats { display: flex; gap: 24px; }
-    .mode-tabs { display: flex; gap: 4px; margin: 0 0 12px; }
-    .mode-tab { flex: 1; background: none; border: 1px solid var(--line); border-radius: 8px; color: var(--muted);
+    /* ---- The route, inside the side panel ---- */
+    #route-summary { display: none; padding: 14px; }
+    #route-summary.open { display: flex; flex-direction: column; gap: 12px; }
+    #route-summary > * { margin: 0; }
+    .rs-title { flex: 1; min-width: 0; }
+    .rs-dest { font-size: var(--t-lg); font-weight: 600; line-height: 1.3; }
+    .rs-label { display: none; }
+    .swap-mini svg { width: 17px; height: 17px; }
+    .rs-facts { display: flex; flex-direction: column; gap: 3px; }
+    .rs-stats { display: flex; align-items: baseline; gap: 10px; }
+    /* The time is the headline number; distance follows quietly. The count of
+       things on the route lives in the forecast below and on the bell. */
+    .rs-stat .cap, .rs-stat:nth-child(3) { display: none; }
+    .rs-stat:nth-child(2) .num { font-size: var(--t-md); font-weight: 400; color: var(--muted); }
+    .rs-stat:nth-child(2) .num small { font-size: var(--t-md); }
+        .mode-tabs { display: flex; gap: 6px; }
+    .mode-tab { flex: 1; background: none; border: 1px solid var(--line); border-radius: var(--r-md); color: var(--muted);
       cursor: pointer; padding: 6px 0 5px; font-family: var(--sans); display: flex; flex-direction: column;
       align-items: center; gap: 1px; }
-    .mode-tab .m { font-size: 12px; font-weight: 600; }
-    .mode-tab .t { font-family: var(--mono); font-size: 10px; }
+    .mode-tab .m { font-size: var(--t-sm); font-weight: 600; }
+    .mode-tab .t { font-family: var(--mono); font-size: var(--t-xs); }
     .mode-tab:hover:not(:disabled) { border-color: var(--accent); }
-    .mode-tab.on { border-color: var(--accent); color: var(--accent); background: rgba(0,229,199,0.08); }
+    .mode-tab.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
     .mode-tab:disabled { opacity: 0.4; cursor: default; }
-    /* Stops above the search panel, whose height varies (the From note, chips):
-       --search-h is measured by a ResizeObserver. 20 px margins + a 10 px gap. */
-    #route-summary { max-height: calc(100vh - var(--search-h, 200px) - 50px); overflow-y: auto; }
     /* Transit itinerary */
     #transit-plan { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
-    .tp-head { font-size: 13px; color: var(--muted); }
+    .tp-head { font-size: var(--t-md); color: var(--muted); }
     .tp-head b { color: var(--ink); font-weight: 600; }
     .tp-opts { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
     .tp-opt { display: flex; align-items: center; gap: 6px; background: none; border: 1px solid var(--line);
-      border-radius: 8px; padding: 5px 8px; cursor: pointer; color: var(--muted); font-family: var(--mono); font-size: 10px; }
+      border-radius: var(--r-md); padding: 5px 8px; cursor: pointer; color: var(--muted); font-family: var(--mono); font-size: var(--t-xs); }
     .tp-opt.on { border-color: var(--accent); color: var(--ink); }
     .tp-opt .gap { flex: 1; }
     .tp-steps { list-style: none; margin: 10px 0 0; padding: 0; }
     .tp-step { display: flex; gap: 10px; padding: 7px 0; position: relative; }
-    .tp-step + .tp-step { border-top: 1px solid rgba(255,255,255,0.04); }
-    .tp-badge { flex: 0 0 auto; min-width: 26px; height: 22px; padding: 0 6px; box-sizing: border-box; border-radius: 6px;
-      display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
-      background: var(--accent); color: #05221e; }
-    .tp-badge.walk { background: none; border: 1px dashed var(--line); color: var(--muted); font-weight: 400; font-family: var(--mono); font-size: 9px; }
-    .tp-badge.mini { min-width: 0; height: 16px; padding: 0 4px; font-size: 9px; border-radius: 4px; }
-    .tp-t { font-size: 13px; color: var(--ink); line-height: 1.35; }
-    .tp-sub { font-size: 11px; color: var(--muted); line-height: 1.45; margin-top: 2px; }
+    .tp-step + .tp-step { border-top: 1px solid var(--hair); }
+    .tp-badge { flex: 0 0 auto; min-width: 26px; height: 22px; padding: 0 6px; box-sizing: border-box; border-radius: var(--r-sm);
+      display: flex; align-items: center; justify-content: center; font-size: var(--t-xs); font-weight: 700;
+      background: var(--accent); color: var(--on-accent); }
+    .tp-badge.walk { background: none; border: 1px dashed var(--line); color: var(--muted); font-weight: 400; font-family: var(--mono); font-size: var(--t-xs); }
+    .tp-badge.mini { min-width: 0; height: 16px; padding: 0 4px; font-size: var(--t-xs); border-radius: var(--r-sm); }
+    .tp-t { font-size: var(--t-md); color: var(--ink); line-height: 1.35; }
+    .tp-sub { font-size: var(--t-xs); color: var(--muted); line-height: 1.45; margin-top: 2px; }
     .tp-sub b { color: var(--ink); font-weight: 600; }
-    .tp-note { font-size: 11px; color: var(--muted); margin-top: 8px; }
+    .tp-note { font-size: var(--t-xs); color: var(--muted); margin-top: 8px; }
     /* Live status */
-    .tp-live { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; margin-top: 3px; font-weight: 600; }
+    .tp-live { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-xs); margin-top: 3px; font-weight: 600; }
     .tp-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
     .tp-live.ok { color: var(--green); }
     .tp-live.late { color: var(--yellow); }
     .tp-live.bad { color: var(--red); }
     .tp-live.quiet { color: var(--muted); font-weight: 400; }
     .tp-live.quiet::before { background: none; border: 1px solid currentColor; }
-    .tp-livehead { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .tp-livehead { font-size: var(--t-xs); color: var(--muted); margin-top: 4px; }
     .tp-livehead b { color: var(--ink); }
-    .tp-warn { margin-top: 8px; padding: 7px 9px; border-radius: 8px; font-size: 12px; line-height: 1.4;
-      background: rgba(255,59,48,0.12); color: #FF8A80; }
-    .tp-alert { margin-top: 5px; padding: 6px 8px; border-radius: 7px; background: rgba(255,176,32,0.10);
-      font-size: 11px; line-height: 1.4; color: var(--ink); }
+    .tp-warn { margin-top: 8px; padding: 7px 9px; border-radius: var(--r-md); font-size: var(--t-sm); line-height: 1.4;
+      background: rgba(255,59,48,0.12); color: var(--red-soft); }
+    .tp-alert { margin-top: 5px; padding: 6px 8px; border-radius: var(--r-md); background: rgba(255,176,32,0.10);
+      font-size: var(--t-xs); line-height: 1.4; color: var(--ink); }
     .tp-alert b { color: var(--yellow); font-weight: 600; }
     .tp-alert a { color: var(--muted); }
-    .rs-stat .num { font-size: 22px; font-weight: 700; font-family: var(--mono); }
-    .rs-stat .num small { font-size: 12px; color: var(--muted); font-weight: 400; }
-    .rs-stat .cap { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
+    .rs-stat .num { font-size: var(--t-2xl); font-weight: 700; font-family: var(--mono); }
+    .rs-stat .num small { font-size: var(--t-sm); color: var(--muted); font-weight: 400; }
+    .rs-stat .cap { font-size: var(--t-xs); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-top: 2px; }
     .rs-stat .num.warn { color: var(--yellow); }
     .time-row { display: flex; align-items: center; gap: 6px; margin: -4px 0 12px; flex-wrap: wrap; }
-    .time-seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .time-seg { display: flex; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
     .time-seg button { background: none; border: none; color: var(--muted); font-family: var(--sans);
-      font-size: 11px; padding: 5px 9px; cursor: pointer; }
+      font-size: var(--t-xs); padding: 5px 9px; cursor: pointer; }
     .time-seg button + button { border-left: 1px solid var(--line); }
-    .time-seg button.on { color: var(--accent); background: rgba(0,229,199,0.08); }
-    .time-input { background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 7px;
-      color: var(--ink); font-family: var(--sans); font-size: 11px; padding: 4px 6px; color-scheme: dark; }
-    .rs-when { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .time-seg button.on { color: var(--accent); background: var(--accent-soft); }
+    .time-input { background: var(--fill); border: 1px solid var(--line); border-radius: var(--r-md);
+      color: var(--ink); font-family: var(--sans); font-size: var(--t-xs); padding: 4px 6px; color-scheme: dark; }
+    .rs-when { font-size: var(--t-sm); color: var(--muted); margin-top: 8px; }
     .rs-when b { color: var(--ink); }
-    .rs-traffic { font-size: 11px; margin-top: 8px; color: var(--muted); }
+    .rs-traffic { font-size: var(--t-xs); margin-top: 8px; color: var(--muted); }
     .rs-traffic.slow { color: var(--yellow); }
     .rs-traffic.bad { color: var(--red); }
     .rs-traffic.fast { color: var(--green); }
     .rs-stat .num.danger { color: var(--red); }
 
-    /* AI trip brief */
-    #brief { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); display: none; }
+    /* The forecast: one verdict, coloured by risk. */
+    #brief { display: none; padding: 11px 12px; border-radius: var(--r-md); background: var(--fill);
+      border: 1px solid var(--hair); border-left: 3px solid var(--muted); }
     #brief.open { display: block; }
-    .brief-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .brief-risk { font-size: 10px; font-weight: 700; font-family: var(--mono); letter-spacing: 0.08em;
-      text-transform: uppercase; padding: 3px 8px; border-radius: 6px; }
+    #brief.none { border-left-color: var(--green); }
+    #brief.low, #brief.medium { border-left-color: var(--yellow); }
+    #brief.high { border-left-color: var(--red); background: rgba(255,59,48,0.08); }
+    .brief-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+    .brief-top:has(#brief-risk:empty) { display: none; }
+    .brief-risk { font-size: var(--t-xs); font-weight: 700; padding: 2px 8px; border-radius: var(--r-pill); }
     .brief-risk.none   { background: rgba(61,214,140,0.15); color: var(--green); }
     .brief-risk.low    { background: rgba(255,176,32,0.15); color: var(--yellow); }
     .brief-risk.medium { background: rgba(255,176,32,0.20); color: var(--yellow); }
-    .brief-risk.high   { background: rgba(255,59,48,0.15);  color: var(--red); }
-    .brief-src { font-size: 9px; font-family: var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-    .brief-headline { font-size: 14px; font-weight: 600; line-height: 1.35; margin-bottom: 6px; }
-    .brief-rec { font-size: 12px; color: var(--muted); line-height: 1.45; }
-    .brief-rec b { color: var(--accent); font-weight: 600; }
-    .brief-loading { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+    .brief-risk.high   { background: rgba(255,59,48,0.18);  color: var(--red); }
+    .brief-src { font-size: var(--t-xs); color: var(--muted); }
+    .brief-headline { font-size: var(--t-lg); font-weight: 600; line-height: 1.35; }
+    .brief-rec { font-size: var(--t-sm); color: var(--muted); line-height: 1.45; margin-top: 4px; }
+    .brief-rec:empty { display: none; }
+    .brief-loading { font-size: var(--t-sm); color: var(--muted); font-weight: 400; }
 
     /* ---- Notification bell (top-right) ---- */
     #bell {
@@ -251,7 +265,7 @@
     #bell svg { width: 20px; height: 20px; }
     #bell-badge {
       position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px;
-      border-radius: 10px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700;
+      border-radius: var(--r-md); background: var(--red); color: #fff; font-size: var(--t-xs); font-weight: 700;
       font-family: var(--mono); display: none; align-items: center; justify-content: center; border: 2px solid var(--bg);
     }
 
@@ -259,18 +273,18 @@
     #alert-panel { position: absolute; z-index: 3; top: 76px; right: 20px; width: 330px; padding: 8px; display: none; }
     #alert-panel.open { display: block; }
     .alert-panel-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
-    .alert-item { display: flex; gap: 12px; padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .alert-item { display: flex; gap: 12px; padding: 12px; border-bottom: 1px solid var(--hair); }
     .alert-item:last-child { border-bottom: none; }
     .alert-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
     .alert-dot.red    { background: var(--red);    box-shadow: 0 0 8px 1px rgba(255,59,48,0.6); }
     .alert-dot.yellow { background: var(--yellow); box-shadow: 0 0 8px 1px rgba(255,176,32,0.5); }
-    .alert-name { font-size: 14px; color: var(--ink); margin-bottom: 3px; }
-    .alert-reason { font-size: 12px; color: var(--muted); line-height: 1.45; }
-    .alert-empty { padding: 20px 12px; color: var(--muted); font-size: 13px; text-align: center; }
+    .alert-name { font-size: var(--t-md); color: var(--ink); margin-bottom: 3px; }
+    .alert-reason { font-size: var(--t-sm); color: var(--muted); line-height: 1.45; }
+    .alert-empty { padding: 20px 12px; color: var(--muted); font-size: var(--t-md); text-align: center; }
     /* 511 requires acknowledgement as the data provider wherever its data shows. */
-    .alert-credit { padding: 8px 12px; color: var(--muted); font-size: 10px; font-family: var(--mono);
-      letter-spacing: 0.06em; text-transform: uppercase; border-top: 1px solid rgba(255,255,255,0.05); }
-    .alert-more { padding: 11px 12px; font-size: 12px; font-family: var(--mono); letter-spacing: 0.04em;
+    .alert-credit { padding: 8px 12px; color: var(--muted); font-size: var(--t-xs); font-family: var(--mono);
+      letter-spacing: 0.06em; text-transform: uppercase; border-top: 1px solid var(--fill); }
+    .alert-more { padding: 11px 12px; font-size: var(--t-sm); font-family: var(--mono); letter-spacing: 0.04em;
       color: var(--muted); cursor: pointer; border-top: 1px solid var(--line); display: flex;
       align-items: center; justify-content: space-between; }
     .alert-more:hover { color: var(--accent); }
@@ -281,50 +295,50 @@
 
     /* ---- Area feed (View 2: what's happening nearby) ---- */
     #nearby-btn { position: absolute; z-index: 3; top: 20px; right: 78px; height: 46px; padding: 0 16px;
-      border-radius: 23px; display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink);
-      font-family: var(--sans); font-size: 13px; font-weight: 600; }
+      border-radius: var(--r-pill); display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink);
+      font-family: var(--sans); font-size: var(--t-md); font-weight: 600; }
     #nearby-btn:hover { border-color: var(--accent); }
     #feed-panel { position: absolute; z-index: 4; top: 76px; right: 20px; width: 340px; padding: 8px;
       max-height: calc(100vh - 100px); overflow-y: auto; display: none; }
     #feed-panel.open { display: block; }
     /* Scheduler */
     #sched-btn { position: absolute; z-index: 3; top: 20px; right: 192px; height: 46px; padding: 0 16px;
-      border-radius: 23px; display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink);
-      font-family: var(--sans); font-size: 13px; font-weight: 600; }
+      border-radius: var(--r-pill); display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink);
+      font-family: var(--sans); font-size: var(--t-md); font-weight: 600; }
     #sched-btn:hover { border-color: var(--accent); }
     #sched-panel { position: absolute; z-index: 4; top: 76px; right: 20px; width: 380px; padding: 8px;
       max-height: calc(100vh - 100px); overflow-y: auto; display: none; }
     #sched-panel.open { display: block; }
     .sc-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
-    .sc-sec { padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .sc-sec { padding: 12px; border-bottom: 1px solid var(--hair); }
     .sc-sec:last-child { border-bottom: none; }
     .sc-row { display: flex; align-items: center; gap: 10px; padding: 9px 4px;
-      border-bottom: 1px solid rgba(255,255,255,0.04); }
+      border-bottom: 1px solid var(--hair); }
     .sc-row:last-child { border-bottom: none; }
-    .sc-row .nm { flex: 1; font-size: 13px; color: var(--ink); }
-    .sc-row .when { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
-    .sc-tag { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
-      padding: 2px 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
-    .sc-del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 0 2px; }
-    .sc-del:hover { color: #FF3B30; }
-    .sc-input { width: 100%; box-sizing: border-box; background: rgba(255,255,255,0.05);
-      border: 1px solid var(--line); border-radius: 7px; color: var(--ink); font-family: var(--sans);
-      font-size: 13px; padding: 8px 10px; margin-top: 6px; }
+    .sc-row .nm { flex: 1; font-size: var(--t-md); color: var(--ink); }
+    .sc-row .when { font-family: var(--mono); font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
+    .sc-tag { font-family: var(--mono); font-size: var(--t-xs); letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 2px 5px; border-radius: var(--r-sm); border: 1px solid var(--line); color: var(--muted); }
+    .sc-del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: var(--t-lg); padding: 0 2px; }
+    .sc-del:hover { color: var(--red); }
+    .sc-input { width: 100%; box-sizing: border-box; background: var(--fill);
+      border: 1px solid var(--line); border-radius: var(--r-md); color: var(--ink); font-family: var(--sans);
+      font-size: var(--t-md); padding: 8px 10px; margin-top: 6px; }
     .sc-input:focus { outline: none; border-color: var(--accent); }
     .sc-days { display: flex; gap: 4px; margin-top: 8px; }
-    .sc-day { flex: 1; text-align: center; font-family: var(--mono); font-size: 10px; padding: 6px 0;
-      border: 1px solid var(--line); border-radius: 6px; color: var(--muted); cursor: pointer; user-select: none; }
+    .sc-day { flex: 1; text-align: center; font-family: var(--mono); font-size: var(--t-xs); padding: 6px 0;
+      border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--muted); cursor: pointer; user-select: none; }
     .sc-day.on { border-color: var(--accent); color: var(--accent); }
     .sc-btn { width: 100%; margin-top: 8px; background: none; border: 1px solid var(--line);
-      color: var(--accent); font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
-      text-transform: uppercase; padding: 8px; border-radius: 7px; cursor: pointer; }
+      color: var(--accent); font-family: var(--mono); font-size: var(--t-xs); letter-spacing: 0.08em;
+      text-transform: uppercase; padding: 8px; border-radius: var(--r-md); cursor: pointer; }
     .sc-btn:hover:not(:disabled) { border-color: var(--accent); }
     .sc-btn:disabled { color: var(--muted); opacity: 0.55; cursor: default; }
-    .sc-note { font-size: 11px; color: var(--muted); margin-top: 7px; line-height: 1.45; }
-    .sc-note.err { color: #FF8A80; }
+    .sc-note { font-size: var(--t-xs); color: var(--muted); margin-top: 7px; line-height: 1.45; }
+    .sc-note.err { color: var(--red-soft); }
     .sc-note.ok { color: var(--accent); }
-    .sc-tag.cal { border-color: rgba(122,162,255,0.45); color: #7AA2FF; }
-    .sc-lbl { display: block; font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em;
+    .sc-tag.cal { border-color: rgba(122,162,255,0.45); color: var(--cal); }
+    .sc-lbl { display: block; font-family: var(--mono); font-size: var(--t-xs); letter-spacing: 0.08em;
       text-transform: uppercase; color: var(--muted); margin-top: 10px; }
     .sc-lbl + .sc-input, .sc-lbl + .where-wrap .sc-input { margin-top: 4px; }
     .sc-pair { display: flex; gap: 8px; }
@@ -335,72 +349,72 @@
     select.sc-input { appearance: none; cursor: pointer; background-image:
       linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
       background-position: calc(100% - 15px) 50%, calc(100% - 10px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
-    select.sc-input option { background: #16161a; }
+    select.sc-input option { background: var(--surface); }
     input.sc-input[type="date"], input.sc-input[type="time"] { color-scheme: dark; }
     .where-wrap { position: relative; }
     #where-sugg { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 5; display: none;
-      background: #141418; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+      background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 4px; }
     #where-sugg.open { display: block; }
     /* Month calendar */
     .cal-nav { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
-    .cal-month { flex: 1; font-size: 14px; font-weight: 600; color: var(--ink); }
+    .cal-month { flex: 1; font-size: var(--t-md); font-weight: 600; color: var(--ink); }
     .cal-arrow, .cal-today { background: none; border: 1px solid var(--line); color: var(--ink);
-      border-radius: 7px; cursor: pointer; height: 28px; }
-    .cal-arrow { width: 28px; font-size: 16px; line-height: 1; }
-    .cal-today { padding: 0 10px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+      border-radius: var(--r-md); cursor: pointer; height: 28px; }
+    .cal-arrow { width: 28px; font-size: var(--t-lg); line-height: 1; }
+    .cal-today { padding: 0 10px; font-family: var(--mono); font-size: var(--t-xs); letter-spacing: 0.06em;
       text-transform: uppercase; color: var(--muted); }
     .cal-arrow:hover, .cal-today:hover { border-color: var(--accent); }
     .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-    .cal-dow span { text-align: center; font-family: var(--mono); font-size: 9px; color: var(--muted); padding-bottom: 4px; }
-    .cal-day { background: none; border: 1px solid transparent; border-radius: 8px; height: 40px; cursor: pointer;
+    .cal-dow span { text-align: center; font-family: var(--mono); font-size: var(--t-xs); color: var(--muted); padding-bottom: 4px; }
+    .cal-day { background: none; border: 1px solid transparent; border-radius: var(--r-md); height: 40px; cursor: pointer;
       display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-      color: var(--ink); font-family: var(--sans); font-size: 12px; padding: 0; }
-    .cal-day:hover { background: rgba(255,255,255,0.05); }
+      color: var(--ink); font-family: var(--sans); font-size: var(--t-sm); padding: 0; }
+    .cal-day:hover { background: var(--fill); }
     .cal-day.other, .cal-day.past { color: #555; }
     .cal-day.today > span:first-child { color: var(--accent); font-weight: 700; }
-    .cal-day.sel { border-color: var(--accent); background: rgba(0,229,199,0.08); }
+    .cal-day.sel { border-color: var(--accent); background: var(--accent-soft); }
     .cal-day .dots { display: flex; gap: 2px; height: 4px; }
     .cal-day .dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
-    .cal-day .dots i.cal { background: #7AA2FF; }
+    .cal-day .dots i.cal { background: var(--cal); }
     .day-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-    .day-title { font-size: 13px; font-weight: 600; color: var(--ink); }
-    .day-add { background: none; border: none; color: var(--accent); font-family: var(--mono); font-size: 10px;
+    .day-title { font-size: var(--t-md); font-weight: 600; color: var(--ink); }
+    .day-add { background: none; border: none; color: var(--accent); font-family: var(--mono); font-size: var(--t-xs);
       letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; padding: 4px 0; }
-    .day-empty { font-size: 12px; color: var(--muted); padding: 6px 0 2px; }
+    .day-empty { font-size: var(--t-sm); color: var(--muted); padding: 6px 0 2px; }
     .sc-row .when { min-width: 58px; }
     .conn-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
     .conn-row .sc-note { margin-top: 2px; }
-    .conn-name { font-size: 13px; color: var(--ink); }
-    .conn-btn { background: none; border: 1px solid var(--line); color: var(--accent); border-radius: 7px;
-      font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+    .conn-name { font-size: var(--t-md); color: var(--ink); }
+    .conn-btn { background: none; border: 1px solid var(--line); color: var(--accent); border-radius: var(--r-md);
+      font-family: var(--mono); font-size: var(--t-xs); letter-spacing: 0.06em; text-transform: uppercase;
       padding: 7px 12px; cursor: pointer; white-space: nowrap; }
     .conn-btn:hover { border-color: var(--accent); }
     /* The prediction log */
-    .log-score { font-size: 12px; color: var(--ink); margin: 8px 0 4px; line-height: 1.5; }
+    .log-score { font-size: var(--t-sm); color: var(--ink); margin: 8px 0 4px; line-height: 1.5; }
     .log-score b { color: var(--accent); font-weight: 600; }
-    .log-item { padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.05); }
+    .log-item { padding: 10px 0; border-top: 1px solid var(--fill); }
     .log-item:first-child { border-top: none; }
-    .log-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--ink); }
-    .log-top .when { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
-    .log-line { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.45; }
+    .log-top { display: flex; justify-content: space-between; gap: 8px; font-size: var(--t-md); color: var(--ink); }
+    .log-top .when { font-family: var(--mono); font-size: var(--t-xs); color: var(--muted); white-space: nowrap; }
+    .log-line { font-size: var(--t-xs); color: var(--muted); margin-top: 3px; line-height: 1.45; }
     .log-line .off { color: var(--yellow); }
     .log-rate { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; align-items: center; }
-    .log-rate button { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 7px;
-      font-size: 11px; padding: 4px 9px; cursor: pointer; }
+    .log-rate button { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: var(--r-md);
+      font-size: var(--t-xs); padding: 4px 9px; cursor: pointer; }
     .log-rate button.on { border-color: var(--accent); color: var(--accent); }
-    .log-rate label { font-size: 11px; color: var(--muted); display: flex; gap: 5px; align-items: center;
+    .log-rate label { font-size: var(--t-xs); color: var(--muted); display: flex; gap: 5px; align-items: center;
       margin-left: auto; cursor: pointer; }
     .feed-head { padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
-    .feed-place { font-size: 14px; font-weight: 600; color: var(--ink); margin-top: 3px; }
-    .feed-item { display: flex; gap: 11px; padding: 11px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .feed-place { font-size: var(--t-md); font-weight: 600; color: var(--ink); margin-top: 3px; }
+    .feed-item { display: flex; gap: 11px; padding: 11px 12px; border-bottom: 1px solid var(--hair); }
     .feed-item:last-child { border-bottom: none; }
-    .feed-icon { font-size: 17px; line-height: 1.2; flex-shrink: 0; }
-    .feed-name { font-size: 13px; color: var(--ink); }
+    .feed-icon { font-size: var(--t-lg); line-height: 1.2; flex-shrink: 0; }
+    .feed-name { font-size: var(--t-md); color: var(--ink); }
     .feed-name .sev { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 6px; vertical-align: middle; }
     .feed-name .sev.red { background: var(--red); } .feed-name .sev.yellow { background: var(--yellow); }
-    .feed-meta { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 2px; }
-    .feed-addr { font-size: 11px; color: var(--muted); margin-top: 2px; }
-    .feed-more { padding: 11px 12px; font-size: 12px; font-family: var(--mono); letter-spacing: 0.04em;
+    .feed-meta { font-size: var(--t-xs); color: var(--muted); font-family: var(--mono); margin-top: 2px; }
+    .feed-addr { font-size: var(--t-xs); color: var(--muted); margin-top: 2px; }
+    .feed-more { padding: 11px 12px; font-size: var(--t-sm); font-family: var(--mono); letter-spacing: 0.04em;
       color: var(--muted); cursor: pointer; border-top: 1px solid var(--line); display: flex;
       align-items: center; justify-content: space-between; }
     .feed-more:hover { color: var(--accent); }
@@ -409,42 +423,41 @@
     #feed-minor { display: none; }
     #feed-panel.show-minor #feed-minor { display: block; }
 
-    /* ---- Parking panel (bottom-right) ---- */
-    #parking-panel { position: absolute; z-index: 3; right: 20px; bottom: 20px; width: 300px; padding: 8px; display: none; }
+    /* ---- Parking: a section of the route, for drives ---- */
+    #parking-panel { display: none; padding-top: 12px; border-top: 1px solid var(--hair); }
     #parking-panel.open { display: block; }
-    .pp-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 12px; border-bottom: 1px solid var(--line); }
+    .pp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 4px; }
+    .rs-parking { display: none !important; }
     .pp-btn { background: none; border: 1px solid var(--line); color: var(--accent); font-family: var(--mono);
-      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+      font-size: var(--t-xs); letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 8px; border-radius: var(--r-sm); cursor: pointer; }
     .pp-btn:hover:not(:disabled) { border-color: var(--accent); }
     .pp-btn:disabled { color: var(--muted); border-color: var(--line); cursor: default; opacity: 0.55; }
-    .pk-item { display: flex; gap: 12px; padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    .pk-item { display: flex; gap: 12px; padding: 12px; border-bottom: 1px solid var(--hair); }
     .pk-item:last-child { border-bottom: none; }
-    .pk-badge { flex-shrink: 0; align-self: flex-start; font-size: 10px; font-weight: 700; font-family: var(--mono);
-      letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 8px; border-radius: 6px; }
+    .pk-badge { flex-shrink: 0; align-self: flex-start; font-size: var(--t-xs); font-weight: 700; font-family: var(--mono);
+      letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 8px; border-radius: var(--r-sm); }
     .pk-badge.easy     { background: rgba(61,214,140,0.15); color: var(--green); }
     .pk-badge.moderate { background: rgba(255,176,32,0.15); color: var(--yellow); }
     .pk-badge.hard     { background: rgba(255,59,48,0.15);  color: var(--red); }
     .pk-badge.metered  { background: rgba(167,139,250,0.15); color: var(--meter); }
     .pk-badge.garage   { background: rgba(79,142,247,0.15);  color: var(--garage); }
-    .pk-name { font-size: 14px; color: var(--ink); margin-bottom: 3px; }
-    .pk-caution { font-size: 11px; color: var(--red); font-family: var(--mono); }
-    .pk-sub { font-size: 12px; color: var(--muted); }
-    .pk-meta { font-size: 11px; color: var(--muted); font-family: var(--mono); margin-top: 4px; }
-    .pk-sec { padding: 12px 12px 4px; display: flex; align-items: center; gap: 7px; }
+    .pk-name { font-size: var(--t-md); color: var(--ink); margin-bottom: 3px; }
+    .pk-caution { font-size: var(--t-xs); color: var(--red); font-family: var(--mono); }
+    .pk-sub { font-size: var(--t-sm); color: var(--muted); }
+    .pk-meta { font-size: var(--t-xs); color: var(--muted); font-family: var(--mono); margin-top: 4px; }
+    .pk-sec { padding: 8px 0 2px; display: flex; align-items: center; gap: 7px; }
     .pk-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
     .pk-dot.metered { background: var(--meter); }
     .pk-dot.garage  { background: var(--garage); }
-    .pk-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 8px 12px 8px 28px; }
-    .pk-row .nm { font-size: 13px; color: var(--ink); }
-    .pk-row .ct { font-size: 11px; color: var(--muted); font-family: var(--mono); white-space: nowrap; }
+    .pk-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 6px 0 6px 16px; }
+    .pk-row .nm { font-size: var(--t-md); color: var(--ink); }
+    .pk-row .ct { font-size: var(--t-xs); color: var(--muted); font-family: var(--mono); white-space: nowrap; }
 
     /* ---- Trip mode (committed route) ---- */
-    .rs-start { margin-top: 14px; width: 100%; padding: 10px; border: none; border-radius: 10px;
-      background: var(--accent); color: #05221e; font-size: 14px; font-weight: 700; cursor: pointer; font-family: var(--sans); }
+    .rs-start { width: 100%; padding: 12px; border: none; border-radius: var(--r-md);
+      background: var(--accent); color: var(--on-accent); font-size: var(--t-lg); font-weight: 700; cursor: pointer; font-family: var(--sans); }
     .rs-start:hover { filter: brightness(1.08); }
-    body.trip-mode #search-panel,
-    body.trip-mode #route-summary,
-    body.trip-mode #parking-panel,
+    body.trip-mode #side,
     body.trip-mode #alert-panel,
     body.trip-mode #sched-btn, body.trip-mode #nearby-btn,
     body.trip-mode #sched-panel, body.trip-mode #feed-panel,
@@ -453,42 +466,42 @@
       display: none; flex-direction: column; overflow: hidden; }
     body.trip-mode #trip-panel { display: flex; }
     .trip-bar { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--line); }
-    #trip-eta { color: var(--accent); font-size: 18px; font-weight: 700; font-family: var(--mono); }
-    #trip-dist { color: var(--muted); font-family: var(--mono); font-size: 13px; }
-    .trip-next { padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink); }
+    #trip-eta { color: var(--accent); font-size: var(--t-xl); font-weight: 700; font-family: var(--mono); }
+    #trip-dist { color: var(--muted); font-family: var(--mono); font-size: var(--t-md); }
+    .trip-next { padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: var(--t-md); color: var(--ink); }
     #trip-body { overflow-y: auto; }
     .trip-sec-title { padding: 14px 18px 6px; display: block; }
     .step-item { display: flex; gap: 10px; justify-content: space-between; padding: 10px 18px;
-      border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 13px; color: var(--ink); }
-    .step-dist { color: var(--muted); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+      border-bottom: 1px solid var(--hair); font-size: var(--t-md); color: var(--ink); }
+    .step-dist { color: var(--muted); font-family: var(--mono); font-size: var(--t-xs); white-space: nowrap; }
 
     /* Navigation banner (step-through) */
     .nav-banner { padding: 16px 18px; border-bottom: 1px solid var(--line); background: rgba(0,229,199,0.06); }
-    .nav-instruction { font-size: 18px; font-weight: 700; line-height: 1.3; color: var(--ink); }
-    .nav-sub { margin-top: 6px; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+    .nav-instruction { font-size: var(--t-xl); font-weight: 700; line-height: 1.3; color: var(--ink); }
+    .nav-sub { margin-top: 6px; font-size: var(--t-sm); color: var(--muted); font-family: var(--mono); }
     .nav-sub .warn { color: var(--yellow); } .nav-sub .danger { color: var(--red); }
     .nav-controls { display: flex; gap: 10px; margin-top: 14px; }
-    .nav-btn { flex: 1; padding: 10px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
-      background: rgba(255,255,255,0.05); color: var(--ink); font-family: var(--sans); font-size: 14px; font-weight: 600; }
-    .nav-btn.primary { background: var(--accent); color: #05221e; border-color: var(--accent); }
+    .nav-btn { flex: 1; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-md); cursor: pointer;
+      background: var(--fill); color: var(--ink); font-family: var(--sans); font-size: var(--t-md); font-weight: 600; }
+    .nav-btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
     .nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .nav-btn:not(:disabled):hover { border-color: var(--accent); }
-    .step-item.current { background: rgba(0,229,199,0.12); border-left: 3px solid var(--accent); }
+    .step-item.current { background: var(--accent-soft); border-left: 3px solid var(--accent); }
     .sim-tag { position: absolute; z-index: 4; bottom: 20px; left: 50%; transform: translateX(-50%);
-      font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
-      color: var(--muted); background: var(--panel); border: 1px solid var(--line); padding: 6px 14px; border-radius: 20px; display: none; }
+      font-family: var(--mono); font-size: var(--t-xs); letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--muted); background: var(--panel); border: 1px solid var(--line); padding: 6px 14px; border-radius: var(--r-pill); display: none; }
     body.trip-mode .sim-tag { display: block; }
     /* Lane guidance: slides in over the map before a turn, merge, ramp or fork.
        Centered on the visible map (the trip panel takes the left 380px). */
     #lane-card { position: absolute; z-index: 5; top: 20px; left: calc(50% + 190px); min-width: 210px; max-width: 340px;
-      padding: 10px 14px 12px; border-radius: 14px; pointer-events: none; opacity: 0;
+      padding: 10px 14px 12px; border-radius: var(--r-lg); pointer-events: none; opacity: 0;
       transform: translate(-50%, -10px); transition: opacity .25s ease, transform .25s ease; display: none; }
     body.trip-mode #lane-card { display: block; }
     #lane-card.show { opacity: 1; transform: translate(-50%, 0); }
-    .lane-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--ink); line-height: 1.35; }
-    .lane-head .in { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; }
-    .lane-tag { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; color: #05221e; background: var(--yellow);
-      border-radius: 4px; padding: 1px 5px; margin-right: 2px; }
+    .lane-head { display: flex; align-items: baseline; gap: 8px; font-size: var(--t-md); color: var(--ink); line-height: 1.35; }
+    .lane-head .in { font-family: var(--mono); font-size: var(--t-sm); color: var(--accent); white-space: nowrap; }
+    .lane-tag { font-family: var(--mono); font-size: var(--t-xs); letter-spacing: .08em; color: var(--on-accent); background: var(--yellow);
+      border-radius: var(--r-sm); padding: 1px 5px; margin-right: 2px; }
     .lanes { display: flex; justify-content: center; margin: 9px 0 6px; }
     .lane { width: 36px; height: 42px; display: flex; align-items: center; justify-content: center;
       background: rgba(255,255,255,0.03); }
@@ -498,36 +511,66 @@
     .lane svg { width: 26px; height: 30px; fill: none; stroke: rgba(255,255,255,0.25); stroke-width: 2.6;
       stroke-linecap: round; stroke-linejoin: round; }
     .lane svg .on { stroke: var(--accent); }
-    .lane-say { text-align: center; font-size: 12px; color: var(--muted); }
+    .lane-say { text-align: center; font-size: var(--t-sm); color: var(--muted); }
     .lane-say b { color: var(--ink); font-weight: 600; }
     #recenter-btn { position: absolute; z-index: 5; right: 20px; bottom: 60px; display: none;
-      align-items: center; gap: 8px; padding: 10px 16px; border-radius: 22px; cursor: pointer;
-      background: var(--accent); color: #05221e; border: none; font-family: var(--sans); font-size: 14px; font-weight: 700; }
+      align-items: center; gap: 8px; padding: 10px 16px; border-radius: var(--r-pill); cursor: pointer;
+      background: var(--accent); color: var(--on-accent); border: none; font-family: var(--sans); font-size: var(--t-md); font-weight: 700; }
     #recenter-btn svg { width: 16px; height: 16px; }
 
-    .mapboxgl-popup-content { background: #16161a; color: var(--ink); border: 1px solid #333; border-radius: 8px; font-size: 13px; padding: 10px 12px; font-family: var(--mono); }
+    .mapboxgl-popup-content { background: var(--surface); color: var(--ink); border: 1px solid #333; border-radius: var(--r-md); font-size: var(--t-md); padding: 10px 12px; font-family: var(--mono); }
     .mapboxgl-popup-content strong { color: #fff; }
-    .mapboxgl-popup-tip { border-top-color: #16161a !important; }
+    .mapboxgl-popup-tip { border-top-color: var(--surface) !important; }
     .mapboxgl-popup-close-button { color: var(--muted); }
     .mapboxgl-ctrl-bottom-right { display: none; }
 
     .no-token { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink); text-align: center; padding: 40px; line-height: 1.6; }
-    .no-token code { background: #222; padding: 2px 6px; border-radius: 4px; color: var(--accent); }
+    .no-token code { background: #222; padding: 2px 6px; border-radius: var(--r-sm); color: var(--accent); }
+    /* Buttons speak plainly: sentence case in the text face. The spaced
+       capitals are kept for section labels only. */
+    .sc-btn, .conn-btn, .pp-btn, .day-add, .cal-today, .add-stop {
+      font-family: var(--sans); font-size: var(--t-sm); font-weight: 600; letter-spacing: 0; text-transform: none; }
+    /* Coming up: your next scheduled trips, on the home view. */
+    .today-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; cursor: pointer;
+      background: var(--fill); border: 1px solid var(--hair); border-radius: var(--r-md); padding: 9px 11px;
+      color: var(--ink); font-family: var(--sans); }
+    .today-row + .today-row { margin-top: 6px; }
+    .today-row:hover { border-color: var(--accent); }
+    .today-main { flex: 1; min-width: 0; }
+    .today-name { font-size: var(--t-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .today-when { font-size: var(--t-xs); color: var(--muted); margin-top: 1px; }
+    .today-fc { flex: 0 0 auto; font-size: var(--t-xs); color: var(--muted); }
+    .today-fc.brief-risk { color: inherit; }
+
+    @media (min-width: 641px) {
+      /* The destination box right above already names a single destination. */
+      body:not(.multi-stop) .rs-dest { display: none; }
+      body:not(.multi-stop) .rs-label { display: block; }
+      .swap-mini { display: none; }
+    }
+
     /* ---- Phones ----------------------------------------------------------
-       One bottom sheet at a time — search, or the route once there is one —
-       so the map stays visible above it; an icon-only top bar; side panels
-       become full-width sheets under it. Inputs are 16px because iOS zooms
-       the whole page into any smaller input you tap. */
+       The side panel becomes the bottom sheet, so the map stays visible above
+       it: search and the home view, or the route once there is one (× goes
+       back). The route leads with what you came for — time, forecast, Start —
+       and the planning controls follow. An icon-only top bar; the other
+       panels become full-width sheets under it. Inputs are 16px because iOS
+       zooms the whole page into any smaller input you tap. */
     @media (max-width: 640px) {
-      #search-panel { left: 8px; right: 8px; bottom: 8px; width: auto; padding: 14px; box-sizing: border-box; }
+      #side { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 56dvh; }
+      #suggestions, #from-sugg { top: auto; bottom: calc(100% + 8px); }
       body.has-route #search-panel { display: none; }
-      /* The trip panel is a top sheet on a phone: lanes sit low, above the sim tag. */
-      #lane-card { top: auto; bottom: 64px; left: 50%; max-width: calc(100vw - 32px); }
-      /* Adding a stop swaps the route sheet for the search sheet, and back. */
+      body.has-route #side-body { border-top: none; }
+      /* Adding a stop swaps the route for the search box and places, and back. */
       body.has-route.adding-stop #search-panel { display: block; }
       body.adding-stop #route-summary { display: none !important; }
-      #route-summary { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; box-sizing: border-box;
-        max-height: 50dvh; padding: 14px 16px; }
+      body.has-route.adding-stop #side-body { border-top: 1px solid var(--hair); }
+      #route-summary.open > .time-row, #route-summary.open > .rs-stops { order: 2; }
+      body.multi-stop #route-summary.open > .rs-stops { order: 0; }
+      #route-summary.open > #transit-plan { order: 3; }
+      #route-summary.open > #parking-panel { order: 4; }
+      /* The trip panel is a top sheet on a phone: lanes sit low, above the sim tag. */
+      #lane-card { top: auto; bottom: 64px; left: 50%; max-width: calc(100vw - 32px); }
       #sched-btn, #nearby-btn { top: 12px; width: 44px; height: 44px; padding: 0; justify-content: center;
         gap: 0; font-size: 0; }
       #sched-btn { right: 112px; }
@@ -535,68 +578,118 @@
       #bell { top: 12px; right: 8px; width: 44px; height: 44px; }
       #sched-panel, #feed-panel, #alert-panel { top: 64px; left: 8px; right: 8px; width: auto; box-sizing: border-box;
         max-height: calc(100dvh - 80px); overflow-y: auto; }
-      #parking-panel { display: none !important; }
-      body.show-parking #parking-panel.open { display: block !important; top: 64px; left: 8px; right: 8px;
-        bottom: auto; width: auto; box-sizing: border-box; max-height: 40dvh; overflow-y: auto; }
       .phone-only:not([hidden]) { display: inline-flex; }
       input, select, textarea { font-size: 16px !important; }
       .mode-tab { padding: 8px 0 7px; }
-      .time-seg button { padding: 9px 12px; font-size: 12px; }
-      .rs-close { font-size: 26px; padding: 0 4px; }
+      .time-seg button { padding: 9px 12px; }
+      .rs-close { padding: 0 4px; }
       #trip-panel { top: 8px; left: 8px; right: 8px; bottom: auto; width: auto; max-height: 52dvh; }
       #recenter-btn { right: 12px; }
-      .rs-parking { background: none; border: 1px solid var(--line); border-radius: 8px; color: var(--ink);
-        font-size: 12px; padding: 8px 10px; margin-top: 10px; cursor: pointer; align-items: center; gap: 6px; }
-      body.show-parking .rs-parking { border-color: var(--accent); color: var(--accent); }
     }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <!-- Route summary (top-left) -->
-  <div id="route-summary" class="glass">
-    <div class="rs-head">
-      <span class="mono-label">Route</span>
-      <div class="rs-actions">
-        <button id="star-btn" class="star-btn" onclick="toggleSaveCurrent()" title="Save destination" aria-label="Save destination">
-          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-          </svg>
-        </button>
-        <button class="star-btn swap-mini" onclick="swapTrip()" title="Swap start and destination" aria-label="Swap start and destination">⇅</button>
-        <button class="rs-close" onclick="clearRoute()" title="Close route" aria-label="Close route">×</button>
+  <!-- The side panel: where from and where to on top, then either the home
+       view (your next trips, saved and suggested places) or the route. On a
+       phone it is the bottom sheet. -->
+  <div id="side" class="glass">
+    <div id="search-panel">
+      <div class="trip-ends">
+        <div class="end-row">
+          <span class="end-dot from"></span>
+          <div class="search-wrap from-wrap">
+            <input id="from-input" placeholder="Home" autocomplete="off" aria-label="Starting point" />
+            <div id="from-sugg"></div>
+          </div>
+          <button class="from-btn" id="from-here" title="Start from my current location" aria-label="Start from my current location" onclick="useCurrentLocation()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path></svg></button>
+          <button class="from-btn on" id="from-home" title="Start from home" aria-label="Start from home" onclick="useHome()"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"></path><path d="M5 9.5V21h14V9.5"></path></svg></button>
+        </div>
+        <div class="from-note" id="from-note" hidden></div>
+        <div class="mono-label add-label" id="dest-label-text">Destination</div>
+        <div class="end-row">
+          <span class="end-dot to"></span>
+          <div class="search-wrap dest-wrap">
+            <input id="search-input" placeholder="Where to?" autocomplete="off" aria-label="Destination" />
+            <div id="suggestions" class="glass"></div>
+          </div>
+          <button class="cancel-add" onclick="setAddingStop(false)">Cancel</button>
+          <button class="from-btn swap-btn" onclick="swapTrip()" title="Swap start and destination" aria-label="Swap start and destination"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16M3 8l4-4 4 4"></path><path d="M17 20V4M13 16l4 4 4-4"></path></svg></button>
+        </div>
       </div>
     </div>
-    <div class="rs-dest" id="rs-dest">—</div>
-    <div class="rs-stops" id="rs-stops"></div>
-    <div class="mode-tabs" id="mode-tabs"></div>
-    <div class="time-row">
-      <div class="time-seg" id="time-seg">
-        <button data-t="now" class="on" onclick="setTimeMode('now')">Now</button>
-        <button data-t="leave" onclick="setTimeMode('leave')">Leave at</button>
-        <button data-t="arrive" onclick="setTimeMode('arrive')">Arrive by</button>
+
+    <div id="side-body">
+      <div id="home-view">
+        <div id="today" hidden>
+          <div class="mono-label quick-title">Coming up</div>
+          <div id="today-list"></div>
+        </div>
+        <div id="saved-section" style="display:none">
+          <div class="mono-label quick-title">Saved</div>
+          <div class="quick-row" id="saved-row"></div>
+        </div>
+        <div class="mono-label quick-title">Suggested</div>
+        <div class="quick-row" id="quick-row"></div>
       </div>
-      <input type="datetime-local" id="time-input" class="time-input" hidden onchange="onTimeInput()" />
-    </div>
-    <div class="rs-stats">
-      <div class="rs-stat"><div class="num" id="rs-eta">—</div><div class="cap">ETA</div></div>
-      <div class="rs-stat"><div class="num" id="rs-dist">—</div><div class="cap">Distance</div></div>
-      <div class="rs-stat"><div class="num" id="rs-alerts">—</div><div class="cap">On route</div></div>
-    </div>
-    <div class="rs-when" id="rs-when"></div>
-    <button class="rs-parking phone-only" id="rs-parking" hidden onclick="toggleParkingSheet()">Parking near destination</button>
-    <div class="rs-traffic" id="rs-traffic" hidden></div>
-    <div id="transit-plan" hidden></div>
-    <div id="brief">
-      <div class="brief-top">
-        <span id="brief-risk" class="brief-risk"></span>
-        <span id="brief-src" class="brief-src"></span>
+
+      <div id="route-summary">
+        <div class="rs-head">
+          <div class="rs-title">
+            <span class="mono-label rs-label">Route</span>
+            <div class="rs-dest" id="rs-dest">—</div>
+          </div>
+          <div class="rs-actions">
+            <button id="star-btn" class="star-btn" onclick="toggleSaveCurrent()" title="Save destination" aria-label="Save destination">
+              <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+              </svg>
+            </button>
+            <button class="star-btn swap-mini" onclick="swapTrip()" title="Swap start and destination" aria-label="Swap start and destination"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16M3 8l4-4 4 4"></path><path d="M17 20V4M13 16l4 4 4-4"></path></svg></button>
+            <button class="rs-close" onclick="clearRoute()" title="Close route" aria-label="Close route">×</button>
+          </div>
+        </div>
+        <div class="rs-stops" id="rs-stops"></div>
+        <div class="mode-tabs" id="mode-tabs"></div>
+        <div class="time-row">
+          <div class="time-seg" id="time-seg">
+            <button data-t="now" class="on" onclick="setTimeMode('now')">Now</button>
+            <button data-t="leave" onclick="setTimeMode('leave')">Leave at</button>
+            <button data-t="arrive" onclick="setTimeMode('arrive')">Arrive by</button>
+          </div>
+          <input type="datetime-local" id="time-input" class="time-input" hidden onchange="onTimeInput()" />
+        </div>
+        <div class="rs-facts">
+          <div class="rs-stats">
+            <div class="rs-stat"><div class="num" id="rs-eta">—</div><div class="cap">ETA</div></div>
+            <div class="rs-stat"><div class="num" id="rs-dist">—</div><div class="cap">Distance</div></div>
+            <div class="rs-stat"><div class="num" id="rs-alerts">—</div><div class="cap">On route</div></div>
+          </div>
+          <div class="rs-when" id="rs-when"></div>
+          <div class="rs-traffic" id="rs-traffic" hidden></div>
+        </div>
+        <!-- The forecast: the point of the app, so it sits right above Start. -->
+        <div id="brief">
+          <div class="brief-top">
+            <span id="brief-risk" class="brief-risk"></span>
+            <span id="brief-src" class="brief-src"></span>
+          </div>
+          <div id="brief-headline" class="brief-headline"></div>
+          <div id="brief-rec" class="brief-rec"></div>
+        </div>
+        <button id="start-btn" class="rs-start" onclick="startTrip()">Start trip</button>
+        <button class="rs-parking" id="rs-parking" hidden onclick="toggleParkingSheet()">Parking near destination</button>
+        <div id="transit-plan" hidden></div>
+        <div id="parking-panel">
+          <div class="pp-head">
+            <span class="mono-label">Parking near destination</span>
+            <button class="pp-btn" id="pk-show" onclick="toggleParkingView()">Show on map ▸</button>
+          </div>
+          <div id="parking-list"></div>
+        </div>
       </div>
-      <div id="brief-headline" class="brief-headline"></div>
-      <div id="brief-rec" class="brief-rec"></div>
     </div>
-    <button id="start-btn" class="rs-start" onclick="startTrip()">▶ Start trip</button>
   </div>
 
   <!-- Trip (active navigation) panel -->
@@ -790,44 +883,6 @@
     <div id="alert-credit" class="alert-credit" hidden>Traffic data · 511 SF Bay</div>
   </div>
 
-  <!-- Parking panel -->
-  <div id="parking-panel" class="glass">
-    <div class="pp-head">
-      <span class="mono-label">Parking near destination</span>
-      <button class="pp-btn" id="pk-show" onclick="toggleParkingView()">Show on map ▸</button>
-    </div>
-    <div id="parking-list"></div>
-  </div>
-
-  <!-- Search panel -->
-  <div id="search-panel" class="glass">
-    <span class="mono-label">From</span>
-    <div class="from-row">
-      <div class="search-wrap from-wrap">
-        <input id="from-input" placeholder="Home" autocomplete="off" aria-label="Starting point" />
-        <div id="from-sugg"></div>
-      </div>
-      <button class="from-btn" id="from-here" title="Start from my current location" aria-label="Start from my current location" onclick="useCurrentLocation()">◎</button>
-      <button class="from-btn on" id="from-home" title="Start from home" aria-label="Start from home" onclick="useHome()">⌂</button>
-    </div>
-    <div class="from-note" id="from-note" hidden></div>
-    <div class="dest-label">
-      <span class="mono-label" id="dest-label-text">Destination</span>
-      <button class="cancel-add" onclick="setAddingStop(false)">Cancel</button>
-      <button class="swap-btn" onclick="swapTrip()" title="Swap start and destination" aria-label="Swap start and destination">⇅</button>
-    </div>
-    <div class="search-wrap">
-      <input id="search-input" placeholder="Where to?" autocomplete="off" />
-      <div id="suggestions" class="glass"></div>
-    </div>
-    <div id="saved-section" style="display:none">
-      <div class="mono-label quick-title">Saved</div>
-      <div class="quick-row" id="saved-row"></div>
-    </div>
-    <div class="mono-label quick-title">Suggested</div>
-    <div class="quick-row" id="quick-row"></div>
-  </div>
-
   <script>
     const TOKEN = "{{ mapbox_token }}";
 
@@ -995,20 +1050,29 @@
           paint: { "circle-color": "#00E5C7", "circle-radius": 7, "circle-stroke-width": 2, "circle-stroke-color": "#05221e" } });
 
         // Disruption pins (glow, core, label) — sit on top
-        map.addLayer({ id: "alert-glow", type: "circle", source: "alerts",
+        // Notes (a blocked sidewalk, something 1 km off the route) are small
+        // grey dots: there if you look, but not a warning — the card says
+        // "no risk", and the map shouldn't argue with it.
+        const IS_NOTE = ["==", ["get", "note"], true];
+        map.addLayer({ id: "alert-note", type: "circle", source: "alerts", filter: IS_NOTE,
+          paint: { "circle-color": "#77777f", "circle-radius": zoomRadius(3, 5), "circle-opacity": 0.85,
+                   "circle-stroke-width": 1.5, "circle-stroke-color": "#0A0A0B" } });
+        map.addLayer({ id: "alert-glow", type: "circle", source: "alerts", filter: ["!", IS_NOTE],
           paint: { "circle-color": SEVERITY_COLOR, "circle-radius": zoomRadius(10, 20), "circle-blur": 1, "circle-opacity": 0.5 } });
-        map.addLayer({ id: "alert-core", type: "circle", source: "alerts",
+        map.addLayer({ id: "alert-core", type: "circle", source: "alerts", filter: ["!", IS_NOTE],
           paint: { "circle-color": SEVERITY_COLOR, "circle-radius": zoomRadius(5, 9), "circle-stroke-width": 2, "circle-stroke-color": "#0A0A0B" } });
         // Pins carry no always-on text (kept the map uncluttered); the name
         // appears on click (popup) and in the alert panel / trip list.
 
-        map.on("click", "alert-core", (e) => {
-          const p = e.features[0].properties;
-          new mapboxgl.Popup({ offset: 12 }).setLngLat(e.features[0].geometry.coordinates)
-            .setHTML(`<strong>${escapeHtml(p.name)}</strong><br>${escapeHtml(p.reason)}`).addTo(map);
+        ["alert-core", "alert-note"].forEach(layer => {
+          map.on("click", layer, (e) => {
+            const p = e.features[0].properties;
+            new mapboxgl.Popup({ offset: 12 }).setLngLat(e.features[0].geometry.coordinates)
+              .setHTML(`<strong>${escapeHtml(p.name)}</strong><br>${escapeHtml(p.reason)}`).addTo(map);
+          });
+          map.on("mouseenter", layer, () => map.getCanvas().style.cursor = "pointer");
+          map.on("mouseleave", layer, () => map.getCanvas().style.cursor = "");
         });
-        map.on("mouseenter", "alert-core", () => map.getCanvas().style.cursor = "pointer");
-        map.on("mouseleave", "alert-core", () => map.getCanvas().style.cursor = "");
 
         renderQuick();
         renderSaved();
@@ -1248,13 +1312,14 @@
     // ---- Layout: phones get one bottom sheet; the map fits around it ----
     const isPhone = () => window.matchMedia("(max-width: 640px)").matches;
 
-    // Room around a route when the map zooms to it. The desktop panels sit
-    // left and right; on a phone the route card is a sheet over the bottom,
-    // and desktop margins (380 px on the left) are wider than the screen.
+    // Room around a route when the map zooms to it. On a desktop the side
+    // panel takes the left 380 px and the buttons the top right; on a phone
+    // the panel is a sheet over the bottom, and desktop margins are wider
+    // than the screen.
     function fitPadding() {
-      if (!isPhone()) return { top: 120, bottom: 160, left: 380, right: 360 };
-      const sheet = document.getElementById("route-summary").getBoundingClientRect().height || innerHeight * 0.45;
-      return { top: 72, bottom: Math.min(sheet, innerHeight * 0.5) + 36, left: 28, right: 28 };
+      if (!isPhone()) return { top: 96, bottom: 60, left: 420, right: 60 };
+      const sheet = document.getElementById("side").getBoundingClientRect().height || innerHeight * 0.45;
+      return { top: 72, bottom: Math.min(sheet, innerHeight * 0.56) + 36, left: 28, right: 28 };
     }
 
     // Close the route: back to the search sheet, nothing drawn.
@@ -1265,7 +1330,7 @@
         if (map.getSource(id)) map.getSource(id).setData(emptyFC());
       });
       ["route-summary", "parking-panel"].forEach(id => document.getElementById(id).classList.remove("open"));
-      document.body.classList.remove("has-route", "show-parking", "trip-mode");
+      document.body.classList.remove("has-route", "show-parking", "trip-mode", "multi-stop");
       document.getElementById("search-input").value = "";
       updateBell([]); renderAlertList([]); updateStar();
     }
@@ -1295,6 +1360,65 @@
         if (origin.kind === "home") setOrigin({ name: "Home", lat: home.lat, lon: home.lon, kind: "home" });
       }
       updateFromUI();
+      loadToday();          // unlocked: show what's coming up
+    }
+
+    // ---- Coming up: your next scheduled trips, on the home view ----
+    // The app's promise is knowing before you leave, so the first screen says
+    // what's next and how it looks, rather than waiting for a notification.
+    // Each row carries the forecast from the alert already sent for it, or
+    // when that alert is due. Tapping one plans it on the map for its time.
+    // Only shown once the schedule is unlocked; a visitor sees the plain map.
+    let todayTrips = [];
+
+    async function loadToday() {
+      const box = document.getElementById("today");
+      try {
+        const [sched, log] = await Promise.all([
+          fetch("/api/schedule", { headers: schedHeaders() }),
+          fetch("/api/predictions?days=3", { headers: schedHeaders() }),
+        ]);
+        if (!sched.ok) { box.hidden = true; return; }
+        todayTrips = ((await sched.json()).trips || []).filter(t => t.hours_away <= 36).slice(0, 4);
+        const forecasts = {};
+        if (log.ok) ((await log.json()).items || []).forEach(f => { forecasts[f.id] = f; });
+        box.hidden = !todayTrips.length;
+        document.getElementById("today-list").innerHTML = todayTrips.map((t, i) => {
+          const f = forecasts[`${t.id}:${t.next_at}`];
+          const badge = f && f.risk ? `<span class="today-fc brief-risk ${escapeHtml(f.risk)}">${RISK_WORD[f.risk] || "Forecast"}</span>`
+            : `<span class="today-fc">${forecastDue(new Date(t.next_at))}</span>`;
+          const how = (MODES.find(m => m.id === t.mode) || MODES[0]).label;
+          return `<button class="today-row" onclick="goToTrip(${i})">
+            <div class="today-main">
+              <div class="today-name">${escapeHtml(t.label || t.destination)}</div>
+              <div class="today-when">Arrive ${dayAndTime(new Date(t.next_at))} · ${how}</div>
+            </div>${badge}</button>`;
+        }).join("");
+      } catch { box.hidden = true; }
+    }
+
+    function dayAndTime(d) {
+      const days = Math.round((new Date(d).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
+      const day = days === 0 ? "today" : days === 1 ? "tomorrow" : d.toLocaleDateString([], { weekday: "short" });
+      return `${day} ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    }
+
+    // When the alert for a trip goes out (alerts.alert_due_at): 8 PM the
+    // evening before a morning trip, 7 AM the day of a later one.
+    function forecastDue(start) {
+      const due = new Date(start);
+      if (start.getHours() < 12) { due.setDate(due.getDate() - 1); due.setHours(20, 0, 0, 0); }
+      else due.setHours(7, 0, 0, 0);
+      return new Date() < due ? `Forecast at ${due.getHours() === 20 ? "8 PM" : "7 AM"}` : "Tap to check";
+    }
+
+    function goToTrip(i) {
+      const t = todayTrips[i];
+      if (!t) return;
+      if (MODES.some(m => m.id === t.mode)) { travelMode = t.mode; try { localStorage.setItem(MODE_KEY, t.mode); } catch {} }
+      timeValue = t.next_at;                 // arrive by the trip's time
+      setTimeMode("arrive", { route: false });     // pickDestination plans it
+      pickDestination(t.dest_lon, t.dest_lat, escape(t.label || t.destination));
     }
 
     async function savePlaces() {
@@ -1526,10 +1650,6 @@
 
     // Reordering with a pointer (mouse or finger) on the ⠿ handle: rows swap
     // places live as you drag, and the new order is routed when you let go.
-    new ResizeObserver(([entry]) => document.documentElement.style.setProperty(
-      "--search-h", `${Math.ceil(entry.target.getBoundingClientRect().height)}px`))
-      .observe(document.getElementById("search-panel"));
-
     function wireStopDrag(box) {
       box.querySelectorAll(".stop-handle").forEach(handle => {
         handle.addEventListener("pointerdown", e => {
@@ -1572,7 +1692,7 @@
 
     function plannedTime() { return timeMode === "now" || !timeValue ? null : new Date(timeValue); }
 
-    function setTimeMode(mode) {
+    function setTimeMode(mode, { route = true } = {}) {
       timeMode = mode;
       document.querySelectorAll("#time-seg button").forEach(b => b.classList.toggle("on", b.dataset.t === mode));
       const input = document.getElementById("time-input");
@@ -1588,7 +1708,7 @@
         }
         input.value = timeValue;
       }
-      if (currentDest) loadRoutes();
+      if (route && currentDest) loadRoutes();
     }
 
     function onTimeInput() {
@@ -2002,7 +2122,7 @@
         type: "FeatureCollection",
         features: onRoute.map(d => ({
           type: "Feature", geometry: pt(d.lon, d.lat),
-          properties: { name: d.name, reason: d.reason, severity: d.severity },
+          properties: { name: d.name, reason: d.reason, severity: d.severity, note: !affectsTrip(d) },
         })),
       });
 
@@ -2023,7 +2143,7 @@
     // ---- AI trip brief (planning view) ----
     async function loadBrief(name, route, onRoute, destLon, destLat) {
       const brief = document.getElementById("brief");
-      brief.classList.add("open");
+      brief.className = "open";
       document.getElementById("brief-risk").className = "brief-risk";
       document.getElementById("brief-risk").textContent = "";
       document.getElementById("brief-src").textContent = "";
@@ -2061,15 +2181,16 @@
 
     function renderBrief(a, source) {
       if (!a) return;
-      const risk = (a.risk || "none").toLowerCase();
+      const risk = RISK_WORD[(a.risk || "none").toLowerCase()] ? (a.risk || "none").toLowerCase() : "none";
+      document.getElementById("brief").className = "open " + risk;      // colours the block
       const rEl = document.getElementById("brief-risk");
       rEl.className = "brief-risk " + risk;
-      rEl.textContent = "Risk: " + risk;
-      document.getElementById("brief-src").textContent = source === "ai" ? "◆ AI brief" : "◆ predicted";
+      rEl.textContent = RISK_WORD[risk];
+      document.getElementById("brief-src").textContent = source === "ai" ? "AI brief" : "";
       document.getElementById("brief-headline").textContent = a.headline || "";
-      document.getElementById("brief-rec").innerHTML =
-        a.recommendation && a.recommendation !== "No action needed"
-          ? `<b>Do this:</b> ${a.recommendation}` : "No action needed.";
+      // "No action needed" under "Clear drive" says nothing; only real advice shows.
+      const rec = (a.recommendation || "").trim();
+      document.getElementById("brief-rec").textContent = /^no action needed\.?$/i.test(rec) ? "" : rec;
     }
 
     // ---- Parking (panel auto-shows; geometry renders on "Show on map") ----
@@ -2844,6 +2965,7 @@
         : "";
       document.getElementById("route-summary").classList.add("open");
       document.getElementById("rs-dest").textContent = stops.length > 1 ? `${stops.length} stops · ends at ${name}` : name;
+      document.body.classList.toggle("multi-stop", stops.length > 1);
       renderStopList(route);
       const mins = Math.round(route.duration / 60);
       const miles = (route.distance / 1609.34).toFixed(1);

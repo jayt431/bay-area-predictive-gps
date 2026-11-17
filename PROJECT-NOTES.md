@@ -8,7 +8,7 @@ was diagnosed, and how to explain any of it to another person.
 Upload this file into a Claude conversation and ask questions about anything in
 it. It is meant to be talked through, not just read.
 
-**Last updated:** 2026-11-02 · **Live:** https://bay-area-predictive-gps.onrender.com ·
+**Last updated:** 2026-11-16 · **Live:** https://bay-area-predictive-gps.onrender.com ·
 **Repo:** github.com/jayt431/bay-area-predictive-gps
 
 ---
@@ -246,6 +246,42 @@ The test also caught a leftover from the false-alarm fix: the navigation
 banner still warned "Blocked sidewalk ahead" while driving. Navigation now
 uses the same rule as the risk level — only things that can slow you.
 
+### One panel, and the forecast up front
+The app worked but looked scattered: with a route open there were four
+separate panels in four corners, the destination was written twice, and on a
+phone you had to scroll inside the route sheet to reach the forecast and the
+Start button — the two things the app is for. Counting the styles explained
+the untidy feeling: 13 different text sizes, 11 different corner roundings and
+about 49 colours, each chosen on the day its feature was built.
+
+The redesign changes no features. There is now one side panel: where from and
+where to at the top, then either your day or the route. Your day is new —
+"Coming up" lists your next scheduled trips with their forecast, or when the
+forecast is due, and tapping one plans it. In a route, the forecast is a block
+coloured by risk sitting directly above Start trip, and on a phone everything
+you need fits without scrolling; the planning controls follow. Every text
+size, corner and colour now comes from one short list, which is what makes the
+panels look like one app. Buttons read like words instead of all-capital code.
+The minor notes on the map are small grey dots, so the map no longer shows
+orange warning pins beside a card saying "no risk".
+
+It was built on a separate branch with a bookmark of the old version, so it
+could be compared and thrown away without touching the live site.
+
+### Planned trips had no forecast at all
+Testing the redesign turned up something that had been broken for weeks:
+with "Leave at" or "Arrive by", the forecast simply didn't appear. The page
+sends the planned time without a time zone, the server's clock has one, and
+Python refuses to compare the two — so the server crashed on every such
+request and the page quietly hid the empty block. It went unnoticed because
+the block vanishing looked like "nothing to say". Fixed in one line, with a
+test, and sent live straight away rather than waiting for the redesign.
+
+The redesign also showed "Low risk" beside "Clear drive", because traffic
+five minutes slower than usual raised the rating without changing the
+headline. The headline now always says why the rating isn't "none", and a
+transit agency's general notice no longer raises it.
+
 ### Keeping score
 The honest question about this app is whether its forecasts are any good, and
 whether they ever change what you do. Until now there was no way to answer
@@ -467,7 +503,7 @@ do. Picking now waits for the map.
 ### A test suite that runs on every push
 Almost every bug this project hit was found by a check run once by hand and
 then thrown away — so nothing stopped the same bug coming back. Those checks
-are now a permanent suite of 83 tests that runs in about three seconds, needs
+are now a permanent suite of 87 tests that runs in about three seconds, needs
 no keys and no internet, and runs automatically on GitHub on every push.
 
 Most tests are named after the bug they guard: "the summary comes from the

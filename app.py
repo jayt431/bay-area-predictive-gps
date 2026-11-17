@@ -468,7 +468,9 @@ def _fallback_brief(ctx: dict) -> dict:
             rec = (f"Leave by {ctx['leave_by_text']}." if ctx.get("leave_by_text")
                    else f"Leave about {delta} min earlier than usual.")
         elif risk == "none":
+            # The headline has to say why it isn't "none".
             risk = "low"
+            headline = f"Traffic to {dest} is about {delta} min slower than usual."
     if mode == "drive" and ctx.get("leave_by_text") and rec == "No action needed.":
         rec = f"Leave by {ctx['leave_by_text']}."
 
@@ -478,12 +480,16 @@ def _fallback_brief(ctx: dict) -> dict:
     live = plan.get("live") or []
     if live:
         serious = any(("cancelled" in l) or ("miss the" in l) for l in live)
+        # A real delay counts; an agency's service notice ("parade on
+        # Wednesday") is mentioned but is not a risk to this trip.
+        delays = [l for l in live if " alert: " not in l]
         if serious:
             risk = "high" if risk == "high" else "medium"
             headline = live[0] + "."
             rec = "Take the next option, or leave earlier."
-        elif risk == "none":
+        elif delays and risk == "none":
             risk = "low"
+            headline = _as_sentence(delays[0])
         why = _as_sentence(why) + " " + " ".join(_as_sentence(l) for l in live[:3])
     # For transit the plan itself is the most useful line: when to leave and
     # what to board.

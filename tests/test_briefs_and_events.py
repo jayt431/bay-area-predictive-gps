@@ -79,6 +79,27 @@ def test_311_blocked_sidewalks_are_notes_with_honest_labels():
     assert {e["severity"] for e in found} == {"yellow"}
 
 
+def test_numbered_streets_read_like_the_signs():
+    import mock_data
+    assert mock_data.street_case("04TH ST") == "4th St"            # was "04Th St"
+    assert mock_data.street_case("MISSION BAY BLVD SOUTH") == "Mission Bay Blvd South"
+    assert mock_data.street_case("23RD ST") == "23rd St"
+
+
+def test_the_headline_says_why_the_risk_is_not_none():
+    # "Low risk" beside "Clear drive" read as a contradiction: the rating came
+    # from traffic 5 min slower than usual, and the headline never said so.
+    b = brief(mode="drive", traffic_delta_min=6)
+    assert b["risk"] == "low" and "6 min slower" in b["headline"]
+    late = brief(mode="transit", transit={"steps": [], "live": ["The N is running 6 min late"]})
+    assert late["risk"] == "low" and late["headline"] == "The N is running 6 min late."
+
+
+def test_a_service_notice_alone_is_not_a_risk():
+    notice = brief(mode="transit", transit={"steps": [], "live": ["Muni alert: Parade on Wed., 11/4"]})
+    assert notice["risk"] == "none" and "Parade" in notice["why"]
+
+
 def test_traffic_phrase():
     assert alerts.traffic_phrase({"traffic_delta_min": 7}) == "7 min slower than usual"
     assert alerts.traffic_phrase({"traffic_delta_min": 1}) == "about usual for that time"
