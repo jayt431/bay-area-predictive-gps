@@ -99,10 +99,10 @@
   },
   "GG": {
     "agency": "Golden Gate Transit",
-    "start": "20260614",
-    "end": "20261212",
-    "version": "20260908",
-    "generated": "9/8/2026 10:23:13 AM"
+    "start": "20260913",
+    "end": "20270109",
+    "version": "20261124",
+    "generated": "11/24/2026 1:43:20 PM"
   },
   "GP": {
     "agency": "Rec & Park",
@@ -171,8 +171,8 @@
     "agency": "SF Bay Ferry",
     "start": "20261102",
     "end": "20270228",
-    "version": "20261120",
-    "generated": "11/20/2026 3:50:26 PM"
+    "version": "20261124",
+    "generated": "11/24/2026 10:21:16 PM"
   },
   "SC": {
     "agency": "VTA",
