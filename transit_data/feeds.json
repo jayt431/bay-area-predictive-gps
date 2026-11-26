@@ -31,8 +31,8 @@
     "agency": "BART",
     "start": "20260810",
     "end": "20270110",
-    "version": "20261115",
-    "generated": "11/15/2026 4:19:46 PM"
+    "version": "20261126",
+    "generated": "11/26/2026 10:39:32 AM"
   },
   "CC": {
     "agency": "County Connection",
@@ -164,8 +164,8 @@
     "agency": "SMART",
     "start": "20260412",
     "end": "20270430",
-    "version": "20261005",
-    "generated": "10/5/2026 1:45:09 PM"
+    "version": "20261125",
+    "generated": "11/25/2026 7:20:57 PM"
   },
   "SB": {
     "agency": "SF Bay Ferry",
@@ -274,16 +274,16 @@
   },
   "WC": {
     "agency": "WestCAT",
-    "start": "20250809",
+    "start": "20260912",
     "end": "20270611",
-    "version": "20260903",
-    "generated": "9/3/2026 11:10:42 AM"
+    "version": "20261126",
+    "generated": "11/26/2026 10:10:59 AM"
   },
   "WH": {
     "agency": "Wheels",
     "start": "20260921",
     "end": "20270129",
-    "version": "20260922",
-    "generated": "9/22/2026 8:10:37 AM"
+    "version": "20261125",
+    "generated": "11/25/2026 2:08:13 PM"
   }
 }
